@@ -201,6 +201,14 @@ def transaction():
 def migrate(backup: Callable[[str], Path], owner_url: str = "") -> None:
     """Applies pending migrations, each committed together with its version row. The app's own role cannot change the schema."""
     import psycopg
+    if not owner_url:       # the deployed app holds no owner login: fine while the schema is current, refused otherwise
+        with session() as s:
+            if s.execute("SELECT to_regclass('schema_migrations') IS NOT NULL").fetchone()[0]:
+                done = {r[0] for r in s.execute("SELECT version FROM schema_migrations").fetchall()}
+                if all(v in done for v in range(1, len(MIGRATIONS) + 1)):
+                    return
+            if not s.execute("SELECT has_schema_privilege(current_user, current_schema(), 'CREATE')").fetchone()[0]:
+                raise RuntimeError("The database schema is out of date. Run migrations with SUPABASE_MIGRATION_DB_URL set.")
     conn = psycopg.connect(owner_url, autocommit=True, prepare_threshold=None, row_factory=_row_factory) if owner_url else _pool.getconn()
     owner = Session(conn)
     try:

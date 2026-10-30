@@ -24,6 +24,16 @@ def check_config() -> None:
         raise RuntimeError("AF07_SECRET_KEY must be set to at least 32 characters outside development")
 
 
+def check_demo_passwords(users) -> None:
+    """The demo passwords are published in a public repository, so anyone could sign in with them."""
+    from .seed import ADMIN_ACCOUNT, STAFF_PASSWORD     # here because seed imports this module
+    if db.environment() == "development" or os.environ.get("VYUHAM_ALLOW_DEMO_PASSWORDS", "").lower() == "true":
+        return
+    known = [u.username for u in users if any(verify_password(p, u) for p in (ADMIN_ACCOUNT["password"], STAFF_PASSWORD))]
+    if known:
+        raise RuntimeError(f"{len(known)} account(s) still use the published demo passwords. Run scripts.rotate_demo_passwords, or set VYUHAM_ALLOW_DEMO_PASSWORDS=true to accept this.")
+
+
 def _secret() -> bytes:
     """AF07_SECRET_KEY if set, otherwise (development only) a random key kept in the database."""
     global _token_secret

@@ -277,6 +277,8 @@ async def upload_room_file(project_id: str, file: UploadFile = File(...), user: 
 def download_room_file(project_id: str, attachment_id: str, user: Dict = Depends(current_user)):
     row = rooms.get_attachment(user, project_id, attachment_id)
     from pathlib import Path
+    if not Path(row["stored_path"]).exists():       # hosts can clear local disk on restart
+        raise HTTPException(404, "This file is no longer available on the server. Please upload it again.")
     # Always a download, never rendered: an uploaded file must not run as a page on this site.
     return Response(Path(row["stored_path"]).read_bytes(), media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{row["filename"]}"'})
 

@@ -1,4 +1,5 @@
 const TOKEN_KEY = "vyuham.token";
+const API = `${import.meta.env.VITE_API_BASE ?? ""}/api/v1`;     // same origin locally; the Render address on Vercel
 
 export function getToken(): string | null {
   try {
@@ -30,7 +31,7 @@ export function setUnauthorizedHandler(fn: () => void) {
 
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`/api/v1${path}`, {
+  const res = await fetch(`${API}${path}`, {
     method: opts.method ?? (opts.body !== undefined ? "POST" : "GET"),
     headers: {
       "Content-Type": "application/json",
@@ -51,7 +52,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 export function apiUpload<T = any>(path: string, form: FormData, onProgress?: (pct: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/v1${path}`);
+    xhr.open("POST", `${API}${path}`);
     const token = getToken();
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(Math.round((e.loaded / e.total) * 100));
@@ -73,7 +74,7 @@ export function apiUpload<T = any>(path: string, form: FormData, onProgress?: (p
 
 /** Authenticated file download. */
 export async function apiDownload(path: string, filename: string) {
-  const res = await fetch(`/api/v1${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+  const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
   if (!res.ok) throw new ApiError(res.status, `Download failed (${res.status})`);
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");

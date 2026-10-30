@@ -273,3 +273,49 @@ def test_malformed_url_is_rejected_without_echoing_the_password():
     with pytest.raises(RuntimeError) as err:
         pg.open_pool("postgresql://postgres.ref:secret@1234@host:5432/postgres", "vyuham")
     assert "secret" not in str(err.value) and "1234" not in str(err.value)
+
+
+def test_production_refuses_published_demo_passwords(monkeypatch):
+    monkeypatch.setenv("VYUHAM_ENV", "production")
+    monkeypatch.delenv("VYUHAM_ALLOW_DEMO_PASSWORDS", raising=False)
+    with pytest.raises(RuntimeError) as err:
+        auth.check_demo_passwords(STORE.users)
+    assert "Admin@2026" not in str(err.value) and "published demo passwords" in str(err.value)
+    monkeypatch.setenv("VYUHAM_ALLOW_DEMO_PASSWORDS", "true")
+    auth.check_demo_passwords(STORE.users)
+    monkeypatch.delenv("VYUHAM_ALLOW_DEMO_PASSWORDS")
+    private = [u.model_copy(update=auth.hash_password("a-private-password")) for u in STORE.users]
+    auth.check_demo_passwords(private)
+
+
+def test_development_allows_demo_passwords():
+    auth.check_demo_passwords(STORE.users)
+
+
+def test_daily_ai_limit_stops_calls_per_company(monkeypatch):
+    calls = []
+
+    class Fake:
+        class beta:
+            class messages:
+                @staticmethod
+                def create(**kw):
+                    calls.append(kw)
+                    raise AssertionError("should not reach Claude")
+    llm.set_client_for_tests(Fake)
+    monkeypatch.setenv("AF07_DAILY_AI_CALLS", "1")
+    with db.tx() as c:
+        c.execute("INSERT INTO ai_usage (feature, model, input_tokens, output_tokens, ok, error, created_at) VALUES (?,?,?,?,?,?,?)", ("t", "m", 1, 1, 1, None, db.utcnow()))
+    with pytest.raises(llm.LLMUnavailable) as err:
+        llm.create_message("t", system="s", messages=[])
+    assert "daily limit" in str(err.value) and not calls
+
+
+def test_missing_room_file_is_a_clear_404_not_a_crash():
+    from pathlib import Path
+    headers = login(ADMIN_ACCOUNT["username"], ADMIN_ACCOUNT["password"]) if False else {"Authorization": "Bearer " + client.post("/api/v1/auth/login", json={"username": ADMIN_ACCOUNT["username"], "password": ADMIN_ACCOUNT["password"]}).json()["token"]}
+    saved = client.post("/api/v1/projects/PRJ-CRM/room/files", headers=headers, files={"file": ("a.txt", b"hello", "text/plain")}).json()
+    row = db.one("SELECT stored_path FROM room_attachments WHERE id = ?", (saved["id"],))
+    Path(row["stored_path"]).unlink()
+    r = client.get(f"/api/v1/projects/PRJ-CRM/room/files/{saved['id']}", headers=headers)
+    assert r.status_code == 404 and "upload it again" in r.json()["detail"]

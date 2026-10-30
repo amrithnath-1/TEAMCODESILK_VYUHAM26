@@ -50,10 +50,21 @@ def _record(feature: str, usage: Any, ok: bool, error: Optional[str] = None) -> 
                   (feature, model(), getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None), int(ok), error, utcnow()))
 
 
+def _check_daily_limit() -> None:
+    limit = os.environ.get("AF07_DAILY_AI_CALLS", "").strip()
+    if not limit:
+        return
+    today = utcnow()[:10]
+    used = db.one("SELECT COUNT(*) AS n FROM ai_usage WHERE org_id = ? AND created_at >= ?", (db.org(), today))["n"]
+    if used >= int(limit):
+        raise LLMUnavailable("This company has reached its daily limit for AI requests. It resets at midnight UTC.")
+
+
 def create_message(feature: str, *, system: str, messages: List[Dict], tools: Optional[List[Dict]] = None,
                    output_schema: Optional[Dict] = None, max_tokens: int = 8000, effort: str = "medium") -> Any:
     """One Messages API call with typed error handling. Refusals fall back server-side to another model."""
     client = _get_client()
+    _check_daily_limit()
     params: Dict[str, Any] = {
         "model": model(), "max_tokens": max_tokens, "messages": messages,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],

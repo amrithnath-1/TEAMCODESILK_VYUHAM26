@@ -1,0 +1,27 @@
+# Render Blueprint for the backend. Secrets marked sync: false are entered in the Render dashboard, never here.
+services:
+  - type: web
+    name: vyuham-api
+    runtime: python
+    plan: free
+    region: frankfurt    # closest to the Supabase project in London
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # One worker only: core records are held in the process.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.3
+      - key: VYUHAM_ENV
+        value: production
+      - key: AF07_DAILY_AI_CALLS
+        value: "200"
+      - key: SUPABASE_DB_URL      # the restricted vyuham_app login, never the owner login
+        sync: false
+      - key: AF07_SECRET_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AF07_CORS_ORIGINS    # your Vercel address, for example https://vyuham.vercel.app
+        sync: false

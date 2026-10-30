@@ -16,7 +16,7 @@ from .audit import utcnow
 from .org import session_user
 from .ratelimit import _rate_windows, rate_check, rate_limit
 from .routes_company import router as company_router
-from .auth import assert_self_or_admin, check_config, current_user, decode_token, issue_token, organization_from, require_admin, verify_password
+from .auth import assert_self_or_admin, check_config, check_demo_passwords, current_user, decode_token, issue_token, organization_from, require_admin, verify_password
 from .models import (ConversationUpdateRequest, DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
                      AssistantChatRequest, ChallengeResolveRequest, ChangeRequestCreate, ChangeRequestResolve, ClarificationAnswer,
                      EmployeeCreateRequest, EmployeeUpdateRequest, IntegrationEvent, IntegrationEventRequest, LoginRequest,
@@ -26,6 +26,7 @@ from .models import (ConversationUpdateRequest, DecisionRequest, DisputeRequest,
 from .state import STORE
 
 check_config()
+check_demo_passwords(STORE.users)
 _api_docs = {} if db.environment() == "development" else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 app = FastAPI(title="AF-07 Enterprise Workforce Intelligence & Task Allocation API", version="1.0.0", **_api_docs)
 app.add_middleware(
