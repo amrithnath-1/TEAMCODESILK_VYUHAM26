@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlsplit
 
 from .audit import utcnow
-from .schema import COMMON, ORG_TABLES
+from .schema import COMMON, CORE_TABLES, ORG_TABLES
 
 DATA_DIR = Path(os.environ.get("AF07_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "vyuham.db"
@@ -242,14 +242,14 @@ def init() -> None:
         _initialized = True
 
 
-def backup(reason: str) -> Path:
+def backup(reason: str, owner=None) -> Path:
     """Copies the database and uploads to a new folder. Safe while the server runs; never overwrites."""
     stamp = utcnow().replace(":", "").replace("-", "")
     dest = BACKUP_DIR / f"{stamp}-{uuid.uuid4().hex[:6]}-{reason}"
     dest.mkdir(parents=True)
     if DB_URL:
         from . import pg
-        pg.dump_tables(dest)
+        pg.dump_tables(dest, owner)
     else:
         source, target = sqlite3.connect(DB_PATH), sqlite3.connect(dest / "vyuham.db")
         try:
@@ -263,7 +263,7 @@ def backup(reason: str) -> Path:
 
 
 def has_business_data() -> bool:
-    return any(one(f"SELECT 1 AS found FROM {table} WHERE org_id = ? LIMIT 1", (org(),)) for table in BUSINESS_TABLES if table != "chunks_fts")
+    return any(one(f"SELECT 1 AS found FROM {table} WHERE org_id = ? LIMIT 1", (org(),)) for table in BUSINESS_TABLES + ["employees", "tasks"] if table != "chunks_fts")
 
 
 @contextmanager
@@ -330,7 +330,7 @@ def clear_business_data() -> None:
     stored = [r["stored_path"] for t in ("documents", "resumes", "room_attachments") for r in rows(f"SELECT stored_path FROM {t} WHERE org_id = ?", (current,))]
     with tx() as c:
         c.execute("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE org_id = ?)", (current,))
-        for table in COMPANY_ONLY_TABLES + BUSINESS_TABLES:
+        for table in COMPANY_ONLY_TABLES + BUSINESS_TABLES + list(reversed(CORE_TABLES)) + ["core_state"]:
             if table != "chunks_fts":
                 c.execute(f"DELETE FROM {table} WHERE org_id = ?", (current,))
     for path in stored:

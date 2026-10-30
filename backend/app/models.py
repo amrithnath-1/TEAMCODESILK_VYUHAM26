@@ -81,7 +81,6 @@ class Project(BaseModel):
     deadline_days: int
     status: str = "Active"     # Draft | Active | Completed | Archived
     created_by: str = "SYSTEM"
-    org_id: str = "ORG-1"
     start_date: Optional[str] = None
     manager_usernames: List[str] = []
 

@@ -59,7 +59,7 @@ def test_one_company_cannot_read_another_without_any_filter():
         with db.as_org(org_id), pg.session() as s:
             for table in RLS_TABLES:
                 assert s.execute(f'SELECT COUNT(*) FROM "{table}" WHERE org_id = ?', (other,)).fetchone()[0] == 0, table
-            assert s.execute("SELECT COUNT(*) FROM core_state WHERE org_id = ?", (org_id,)).fetchone()[0] == 1
+            assert s.execute("SELECT COUNT(*) FROM org_settings WHERE org_id = ?", (org_id,)).fetchone()[0] == 1
             assert s.execute("SELECT COUNT(*) FROM organizations").fetchone()[0] == 1
     with db.as_org(org_a), pg.session() as s:
         seen = s.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]

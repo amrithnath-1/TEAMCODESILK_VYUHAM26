@@ -74,7 +74,7 @@ Set `VYUHAM_ENV` to `development`, `staging` or `production` (default `developme
 - **Joining:** employees use an invitation code from *Team & Roles*. Codes work once, expire after 7 days, and can be tied to one email. Nobody joins by naming a company.
 - **Roles:** Owner, Administrator, Manager, Employee, enforced by the API. Role changes need the current password again and are written to the audit ledger. A company always keeps at least one owner.
 - **Isolation:** every request runs as the company in its signed token. On Supabase the app connects as `vyuham_app`, a restricted role, and row-level security limits it to that company's rows.
-- **Core records:** employees, projects, tasks and approvals are still one JSON row per company (`core_state`). Newer features use normal tables. Run one backend worker only, because core records are cached in the process.
+- **Core records:** employees, skills, projects, tasks, assignments, approvals, users and the audit ledger are real tables, written through from the server's memory. Run one backend worker only, because the process holds the working copy. An older `core_state` JSON row is imported on first use and left in place.
 - **Files** stay on the backend's disk (`backend/data/uploads`), not in Supabase Storage. They are not scanned for malware.
 - **Team rooms** refresh by polling every few seconds rather than Supabase Realtime.
 

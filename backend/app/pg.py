@@ -4,14 +4,14 @@ import atexit
 import json
 import re
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
 
 from psycopg_pool import ConnectionPool
 
 from .audit import utcnow
-from .schema import COMMON, pg_rls
+from .schema import CORE_RECORDS, EARLY_COMMON, pg_core_rls, pg_rls
 
 _MIGRATION_LOCK = 7306001
 
@@ -93,7 +93,7 @@ MIGRATIONS: List[str] = [
 ]
 
 
-MIGRATIONS = MIGRATIONS + COMMON + [pg_rls()]
+MIGRATIONS = MIGRATIONS + EARLY_COMMON + [pg_rls(), CORE_RECORDS, pg_core_rls()]
 
 
 class Row(dict):
@@ -215,7 +215,7 @@ def migrate(backup: Callable[[str], Path], owner_url: str = "") -> None:
             applied = {r[0] for r in owner.execute("SELECT version FROM schema_migrations").fetchall()}
             pending = [(v, script) for v, script in enumerate(MIGRATIONS, start=1) if v not in applied]
             if applied and pending:     # a new database has nothing to protect
-                backup("pre-migration")
+                backup("pre-migration", owner)
         for version, script in pending:
             with conn.transaction():
                 owner.execute("SELECT pg_advisory_xact_lock(?)", (_MIGRATION_LOCK,))
@@ -230,9 +230,9 @@ def migrate(backup: Callable[[str], Path], owner_url: str = "") -> None:
             _pool.putconn(conn)
 
 
-def dump_tables(dest: Path) -> None:
-    """Writes every table's rows to JSON. The schema itself is in MIGRATIONS."""
-    with session() as s:
+def dump_tables(dest: Path, owner: Optional[Session] = None) -> None:
+    """Writes every table's rows to JSON. The schema itself is in MIGRATIONS. Without an owner session it holds only the current company's rows."""
+    with (nullcontext(owner) if owner else session()) as s:
         tables = [r[0] for r in s.execute("SELECT tablename FROM pg_tables WHERE schemaname = ?", (_schema,)).fetchall()]
         for table in tables:
             rows = [dict(r) for r in s.execute(f'SELECT * FROM "{table}"').fetchall()]

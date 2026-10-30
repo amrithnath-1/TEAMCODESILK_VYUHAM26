@@ -186,6 +186,7 @@ def test_reset_is_refused_outside_development(admin, monkeypatch):
 def test_startup_refuses_to_overwrite_data_when_snapshot_is_missing():
     db.notify("test", "keep me", "body", audience_role="ADMIN")
     with db.tx() as c:
+        c.execute("DELETE FROM org_settings")
         c.execute("DELETE FROM core_state")
     try:
         with pytest.raises(RuntimeError):

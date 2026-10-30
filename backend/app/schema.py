@@ -89,23 +89,121 @@ CREATE TABLE cost_entries (
 CREATE INDEX idx_cost_entries_project ON cost_entries(org_id, project_id);
 """
 
-COMMON = [COMPANIES, SKILLS_AND_LIFECYCLE, ROOMS, BUDGETS]
+CORE_RECORDS = """
+CREATE TABLE org_settings (
+    org_id TEXT PRIMARY KEY, weights_json TEXT NOT NULL, counters_json TEXT NOT NULL, processed_event_keys_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE team_roles (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, department TEXT NOT NULL, role_eval_weights TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE TABLE employees (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, department TEXT NOT NULL, designation TEXT NOT NULL, manager TEXT NOT NULL, team_role_id TEXT NOT NULL,
+    years_exp DOUBLE PRECISION NOT NULL, weekly_capacity_hrs DOUBLE PRECISION NOT NULL, committed_hrs DOUBLE PRECISION NOT NULL, meeting_hrs DOUBLE PRECISION NOT NULL, leave_hrs DOUBLE PRECISION NOT NULL,
+    status TEXT NOT NULL, delivery_completion_rate DOUBLE PRECISION NOT NULL, work_quality_acceptance_rate DOUBLE PRECISION NOT NULL, deadline_reliability_rate DOUBLE PRECISION NOT NULL,
+    collaboration_review_score DOUBLE PRECISION NOT NULL, learning_improvement_score DOUBLE PRECISION NOT NULL, preferred_tasks TEXT NOT NULL, learning_goals TEXT NOT NULL,
+    sufficient_evidence INTEGER NOT NULL, dispute_status TEXT NOT NULL, dispute_note TEXT, availability TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE INDEX idx_employees_status ON employees(org_id, status);
+CREATE TABLE employee_skills (
+    org_id TEXT NOT NULL, employee_id TEXT NOT NULL, skill_name TEXT NOT NULL, level TEXT NOT NULL, is_verified INTEGER NOT NULL, evidence_source TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, employee_id, skill_name),
+    FOREIGN KEY (org_id, employee_id) REFERENCES employees(org_id, id) ON DELETE CASCADE);
+CREATE INDEX idx_employee_skills_skill ON employee_skills(org_id, skill_name);
+CREATE TABLE projects (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, business_objective TEXT NOT NULL, priority TEXT NOT NULL, deadline_days INTEGER NOT NULL, status TEXT NOT NULL, created_by TEXT NOT NULL,
+    start_date TEXT, manager_usernames TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE TABLE tasks (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, project_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, estimated_hours DOUBLE PRECISION NOT NULL, priority TEXT NOT NULL, deadline_days INTEGER NOT NULL,
+    deliverable_criteria TEXT NOT NULL, status TEXT NOT NULL, assigned_to TEXT, progress_pct INTEGER NOT NULL, phase TEXT, milestone TEXT, complexity INTEGER NOT NULL, acceptance_criteria TEXT NOT NULL, deliverables TEXT NOT NULL,
+    subtasks TEXT NOT NULL, suggested_assignee TEXT, blocked INTEGER NOT NULL, blocked_reason TEXT, plan_id TEXT, activity TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id),
+    FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id),
+    FOREIGN KEY (org_id, assigned_to) REFERENCES employees(org_id, id));
+CREATE INDEX idx_tasks_project ON tasks(org_id, project_id);
+CREATE INDEX idx_tasks_assignee ON tasks(org_id, assigned_to);
+CREATE TABLE task_required_skills (
+    org_id TEXT NOT NULL, task_id TEXT NOT NULL, skill_name TEXT NOT NULL, level TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, task_id, skill_name),
+    FOREIGN KEY (org_id, task_id) REFERENCES tasks(org_id, id) ON DELETE CASCADE);
+CREATE TABLE task_dependencies (
+    org_id TEXT NOT NULL, task_id TEXT NOT NULL, depends_on TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, task_id, depends_on),
+    FOREIGN KEY (org_id, task_id) REFERENCES tasks(org_id, id) ON DELETE CASCADE);
+CREATE TABLE task_assignments (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, task_id TEXT NOT NULL, employee_id TEXT NOT NULL, suitability_score DOUBLE PRECISION NOT NULL, factor_breakdown TEXT NOT NULL, explanation_rationale TEXT NOT NULL,
+    tradeoffs_flagged TEXT NOT NULL, status TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE INDEX idx_assignments_task ON task_assignments(org_id, task_id);
+CREATE INDEX idx_assignments_employee ON task_assignments(org_id, employee_id);
+CREATE TABLE deliverables (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, task_id TEXT NOT NULL, employee_id TEXT NOT NULL, accepted INTEGER NOT NULL, rework_count INTEGER NOT NULL, complexity_weight DOUBLE PRECISION NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE TABLE integration_events (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, employee_id TEXT NOT NULL, source_system TEXT NOT NULL, external_id TEXT NOT NULL, pr_review_score DOUBLE PRECISION, defect_rate DOUBLE PRECISION, summary TEXT NOT NULL, received_at TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE TABLE agent_decisions (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, agent_name TEXT NOT NULL, trigger_event TEXT NOT NULL, shortlist TEXT NOT NULL, recommended_action TEXT NOT NULL, risk_level TEXT NOT NULL, requires_approval INTEGER NOT NULL, created_at TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE TABLE approvals (
+    org_id TEXT NOT NULL, approval_id TEXT NOT NULL, decision_id TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT NOT NULL, task_title TEXT NOT NULL, priority TEXT NOT NULL, previous_owner TEXT, previous_owner_id TEXT,
+    recommended_new_owner_id TEXT, recommended_new_owner_name TEXT, suitability_score DOUBLE PRECISION NOT NULL, post_utilization_pct DOUBLE PRECISION NOT NULL, explanation TEXT NOT NULL, shortlist TEXT NOT NULL, status TEXT NOT NULL,
+    manager_comments TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, approval_id));
+CREATE INDEX idx_approvals_status ON approvals(org_id, status);
+CREATE TABLE org_users (
+    org_id TEXT NOT NULL, username TEXT NOT NULL, display_name TEXT NOT NULL, role TEXT NOT NULL, employee_id TEXT, password_hash TEXT NOT NULL, salt TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, username));
+CREATE TABLE audit_log (
+    org_id TEXT NOT NULL, id TEXT NOT NULL, timestamp TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT NOT NULL, prev_hash TEXT NOT NULL, sha256_proof TEXT NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (org_id, id));
+CREATE INDEX idx_audit_entity ON audit_log(org_id, entity_id);
+"""
+
+COMMON = [COMPANIES, SKILLS_AND_LIFECYCLE, ROOMS, BUDGETS, CORE_RECORDS]
+# Postgres numbers its migrations separately, and row-level security came between these two groups.
+EARLY_COMMON = COMMON[:-1]
 
 # Org-scoped tables that RLS protects on Postgres. accounts and invitations are read before login, so see PG_RLS.
-RLS_TABLES = _ORG_COLUMN_TABLES + [
+_FIRST_RLS_TABLES = _ORG_COLUMN_TABLES + [
     "documents", "chunks_fts", "onboarding_messages", "idempotency_keys", "skill_requests", "skill_manual_scores", "project_transitions",
     "project_rooms", "room_members", "room_messages", "room_attachments", "meeting_minutes", "project_decisions", "action_items",
     "project_budgets", "cost_rates", "cost_entries",
 ]
+CORE_TABLES = ["org_settings", "team_roles", "employees", "employee_skills", "projects", "tasks", "task_required_skills", "task_dependencies", "task_assignments", "deliverables",
+               "integration_events", "agent_decisions", "approvals", "org_users", "audit_log"]
+RLS_TABLES = _FIRST_RLS_TABLES + CORE_TABLES
+_GRANTS = """
+    DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vyuham_app') THEN
+            EXECUTE format('GRANT USAGE ON SCHEMA %I TO vyuham_app', current_schema());
+            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO vyuham_app', current_schema());
+            EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO vyuham_app', current_schema());
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON schema_migrations FROM vyuham_app');
+            %s
+        END IF;
+    END $$;
+    """
+
+
+def _policies(tables) -> list:
+    parts = []
+    for table in tables:
+        parts.append(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
+        parts.append(f"CREATE POLICY org_isolation ON {table} USING (org_id = current_setting('app.org_id', true)) "
+                     f"WITH CHECK (org_id = current_setting('app.org_id', true));")
+    return parts
+
+
+def pg_core_rls() -> str:
+    """The app can add audit entries and clear them on a development reset, but never rewrite one."""
+    return "\n".join(_policies(CORE_TABLES) + [_GRANTS.replace("%s", "EXECUTE 'REVOKE UPDATE ON audit_log FROM vyuham_app';")])
 
 
 def pg_rls() -> str:
     """Postgres only. The app role is bound to the organization set on its connection; owners and BYPASSRLS roles are not."""
     parts = ["ALTER TABLE chunks_fts ADD COLUMN org_id TEXT NOT NULL DEFAULT current_setting('app.org_id', true);"]
-    for table in RLS_TABLES:
-        parts.append(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
-        parts.append(f"CREATE POLICY org_isolation ON {table} USING (org_id = current_setting('app.org_id', true)) "
-                     f"WITH CHECK (org_id = current_setting('app.org_id', true));")
+    parts += _policies(_FIRST_RLS_TABLES)
     parts.append("""
     ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
     CREATE POLICY org_self ON organizations USING (id = current_setting('app.org_id', true)) WITH CHECK (id = current_setting('app.org_id', true));
@@ -120,15 +218,5 @@ def pg_rls() -> str:
     CREATE POLICY invitation_update ON invitations FOR UPDATE USING (org_id = current_setting('app.org_id', true)) WITH CHECK (org_id = current_setting('app.org_id', true));
     """)
     # The app role reads and writes through these policies. It owns nothing and cannot bypass them; Supabase's API roles get nothing here.
-    parts.append("""
-    DO $$
-    BEGIN
-        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vyuham_app') THEN
-            EXECUTE format('GRANT USAGE ON SCHEMA %I TO vyuham_app', current_schema());
-            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO vyuham_app', current_schema());
-            EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO vyuham_app', current_schema());
-            EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON schema_migrations FROM vyuham_app');
-        END IF;
-    END $$;
-    """)
+    parts.append(_GRANTS.replace("%s", ""))
     return "\n".join(parts)

@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from .audit import AuditLedger
 from .models import (AgentDecision, ApprovalRecord, Deliverable, Employee, IntegrationEvent, Project, Task,
                      TaskAssignment, TeamRole, User, WeightConfig)
-from . import db, seed
+from . import coretables, db, seed
 from .audit import utcnow
 
 
@@ -63,17 +63,27 @@ class Store:
             payload = {k: [i.model_dump() for i in v] for k, v in self._collections().items()}
             payload.update(weights=self.weights.model_dump(), counters=self.counters, audit=self.ledger.dump(),
                            processed_event_keys=sorted(self.processed_event_keys))
-            text = json.dumps(payload, default=str)
-            digest = hashlib.sha256(text.encode()).digest()
+            digest = hashlib.sha256(json.dumps(payload, default=str).encode()).digest()
             if not force and digest == getattr(self, "_saved_digest", None):
                 return False
-            with db.as_org(self.org_id), db.tx() as c:
-                c.execute("INSERT INTO core_state (key, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, "
-                          "updated_at = excluded.updated_at", (self.key, text, utcnow()))
+            coretables.save(self)
             self._saved_digest = digest
             return True
 
     def load(self) -> bool:
+        with self.lock:
+            if coretables.load(self):
+                self._assign_owner()
+                self._register_accounts()
+                return True
+        return self._import_snapshot()
+
+    def _assign_owner(self) -> None:
+        if self.users and not any(u.role == "OWNER" for u in self.users):     # records from before organization roles
+            next(u for u in self.users if u.role == "ADMIN").role = "OWNER"
+
+    def _import_snapshot(self) -> bool:
+        """First start after the tables were added: copies the old JSON row across. The row itself is left as it was."""
         with db.as_org(self.org_id):
             row = db.one("SELECT json FROM core_state WHERE key = ?", (self.key,))
         if not row:
@@ -94,8 +104,9 @@ class Store:
             self.counters = p["counters"]
             self.processed_event_keys = set(p["processed_event_keys"])
             self.ledger.load(p["audit"])
-            if self.users and not any(u.role == "OWNER" for u in self.users):     # records from before organization roles
-                next(u for u in self.users if u.role == "ADMIN").role = "OWNER"
+            self._assign_owner()
+            self._rows = {}
+            self.save(force=True)
         self._register_accounts()
         return True
 
@@ -113,7 +124,10 @@ class Store:
     def reset(self) -> None:
         db.require_development("Resetting to seed data")
         with self.lock:
-            db.clear_business_data()
+            with db.as_org(self.org_id):
+                db.clear_business_data()
+            self._rows = {}
+            self._saved_digest = None
             self.weights = WeightConfig()
             self.employees: List[Employee] = seed.seed_employees()
             self.tasks: List[Task] = seed.seed_tasks()
