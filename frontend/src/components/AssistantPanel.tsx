@@ -1,5 +1,8 @@
 import { AlertTriangle, Bot, CheckCircle2, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, ShieldQuestion, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { api, apiUpload } from "../api";
 import type { AssistantAction, Nav } from "../types";
 import { PillButton } from "./ui";
@@ -164,7 +167,12 @@ export function AssistantPanel({ isAdmin, projects, defaultProject, reload, seed
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[88%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${m.role === "user" ? "rounded-br-sm bg-brand-500 text-white" : "rounded-bl-sm bg-slate-100 text-slate-700"}`}>
               {m.state && STATE_LABEL[m.state] && <span className={`mb-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATE_LABEL[m.state].cls}`}>{STATE_LABEL[m.state].label}</span>}
-              <div className="whitespace-pre-line break-words">{m.text}</div>
+              {m.role === "user" ? <div className="whitespace-pre-line break-words">{m.text}</div> : (
+                // react-markdown does not render raw HTML, so model and document text stays inert.
+                <div className="chat-md break-words">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={{ a: (p) => <a href={p.href} target="_blank" rel="noreferrer noopener">{p.children}</a> }}>{m.text}</ReactMarkdown>
+                </div>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {[...new Map(m.citations.map((c) => [`${c.document}${c.location}`, c])).values()].slice(0, 5).map((c) => (

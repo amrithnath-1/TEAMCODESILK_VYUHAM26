@@ -11,3 +11,19 @@ body { font-family: Poppins, ui-sans-serif, system-ui, sans-serif; -webkit-font-
 @layer components {
   .field { @apply mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] font-normal text-slate-700 outline-none focus:border-brand-500 disabled:bg-slate-50; }
 }
+
+.chat-md > * + * { margin-top: 0.5rem; }
+.chat-md ul { list-style: disc; padding-left: 1.1rem; }
+.chat-md ol { list-style: decimal; padding-left: 1.1rem; }
+.chat-md li + li { margin-top: 0.15rem; }
+.chat-md strong { font-weight: 600; color: #1e293b; }
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 { font-weight: 600; color: #1e293b; }
+.chat-md h1, .chat-md h2 { font-size: 14px; }
+.chat-md a { color: #1f6fd9; text-decoration: underline; }
+.chat-md code { background: #fff; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+.chat-md pre { background: #fff; border-radius: 8px; padding: 8px; overflow-x: auto; }
+.chat-md pre code { padding: 0; }
+.chat-md blockquote { border-left: 3px solid #cbd5e1; padding-left: 8px; color: #64748b; }
+.chat-md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 12px; }
+.chat-md th, .chat-md td { border: 1px solid #dbe2ea; padding: 3px 8px; text-align: left; }
+.chat-md th { background: #fff; font-weight: 600; }
