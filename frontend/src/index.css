@@ -7,3 +7,7 @@ body { font-family: Poppins, ui-sans-serif, system-ui, sans-serif; -webkit-font-
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #dbe2ea; border-radius: 999px; }
 .recharts-wrapper *:focus { outline: none; }
+
+@layer components {
+  .field { @apply mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] font-normal text-slate-700 outline-none focus:border-brand-500 disabled:bg-slate-50; }
+}

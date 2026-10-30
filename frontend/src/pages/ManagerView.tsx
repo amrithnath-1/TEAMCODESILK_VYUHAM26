@@ -50,7 +50,7 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
   };
 
   const allocate = () => run("alloc", async () => {
-    const r = await api<{ allocations: Allocation[]; allocated_count: number; gini_before: number; gini_after: number }>("/tasks/allocate-all", { body: {} });
+    const r = await api<{ allocations: Allocation[]; allocated_count: number; gini_before: number; gini_after: number }>(`/tasks/allocate-all?project_id=${project}`, { body: {} });
     setAllocs(r.allocations);
     setGiniDelta({ before: r.gini_before, after: r.gini_after });
     toast(`Allocated ${r.allocated_count} task(s). Gini ${r.gini_before} → ${r.gini_after}`);
@@ -66,6 +66,17 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
       body: { employee_id: disruptEmp, new_status: disruptStatus, leave_days: disruptDays, reason: "Simulated from PM console" },
     });
     toast(`${r.disrupted_employee} → ${disruptStatus}. ${r.proposals_created.length} reallocation proposal(s) queued for approval.`);
+  });
+
+  const resolveRequest = (id: string, kind: string, approve: boolean) => run(id, async () => {
+    let new_deadline_days: number | undefined;
+    if (approve && kind === "deadline_change") {
+      const answer = prompt("New deadline (day number)?");
+      if (!answer) return;
+      new_deadline_days = Number(answer);
+    }
+    await api(`/change-requests/${id}/resolve`, { body: { approve, new_deadline_days } });
+    toast(approve ? "Request approved." : "Request declined.");
   });
 
   const whatIf = () => run("whatif", async () => setWi(await api("/simulate/what-if", { body: { task_id: wiTask, employee_id: wiEmp } })));
@@ -190,12 +201,26 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
         </Card>
       )}
 
+      {summary.change_requests.some((r) => r.status === "open") && (
+        <Card title="Employee requests">
+          <div className="space-y-2">
+            {summary.change_requests.filter((r) => r.status === "open").map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 p-3 text-[13px] text-slate-600">
+                <span className="mr-auto min-w-0"><b>{empName(r.employee_id)}</b>: {r.kind.replace("_", " ")}{r.task_id ? ` on ${r.task_id}` : ""}. {r.details}</span>
+                <PillButton variant="success" disabled={!!busy} onClick={() => resolveRequest(r.id, r.kind, true)}>Approve</PillButton>
+                <PillButton disabled={!!busy} onClick={() => resolveRequest(r.id, r.kind, false)}>Decline</PillButton>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title={<span className="flex items-center gap-2"><Zap size={16} className="text-rose-500" />One-click disruption</span>}>
           <p className="mb-3 text-[12px] text-slate-500">Agent 6 detects the change, classifies risk on the DAG, and Agent 7 proposes cascade reassignments for approval.</p>
           <label className="text-[12px] text-slate-600">Employee</label>
           <select value={disruptEmp} onChange={(e) => setDisruptEmp(e.target.value)} className="mb-2 mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-[13px] outline-none">
-            {summary.employees.map((e) => <option key={e.employee_id} value={e.employee_id}>{e.name} ({e.status}, {e.workload_score}%)</option>)}
+            {summary.employees.filter((e) => e.status !== "Inactive").map((e) => <option key={e.employee_id} value={e.employee_id}>{e.name} ({e.status}, {e.workload_score}%)</option>)}
           </select>
           <div className="grid grid-cols-2 gap-2">
             <div><label className="text-[12px] text-slate-600">New status</label>
@@ -213,7 +238,7 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
             <select value={wiTask} onChange={(e) => setWiTask(e.target.value)} className="rounded-lg border border-slate-200 px-2.5 py-2 text-[13px] outline-none">
               {summary.tasks.map((t) => <option key={t.id} value={t.id}>{t.id}</option>)}</select>
             <select value={wiEmp} onChange={(e) => setWiEmp(e.target.value)} className="rounded-lg border border-slate-200 px-2.5 py-2 text-[13px] outline-none">
-              {summary.employees.map((e) => <option key={e.employee_id} value={e.employee_id}>{e.name}</option>)}</select>
+              {summary.employees.filter((e) => e.status !== "Inactive").map((e) => <option key={e.employee_id} value={e.employee_id}>{e.name}</option>)}</select>
           </div>
           <PillButton variant="primary" className="mt-3" disabled={busy === "whatif"} onClick={whatIf}>Simulate</PillButton>
           {wi && (
@@ -250,7 +275,7 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
         </Card>
       </div>
 
-      <CandidateModal task={inspect} onClose={() => setInspect(null)} />
+      <CandidateModal task={inspect} onClose={() => setInspect(null)} onAssigned={(m) => { toast(m); setInspect(null); reload(); }} />
     </div>
   );
 }

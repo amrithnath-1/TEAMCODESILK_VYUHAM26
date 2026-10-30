@@ -1,27 +1,27 @@
 import { Bot, Brain, FolderKanban, GitBranch, Plug, Radar, Scale, ScrollText, Users } from "lucide-react";
+import { AssistantPanel } from "../components/AssistantPanel";
+import { ProjectProgressCard } from "../components/ProgressDonut";
 import { useEffect, useMemo, useState } from "react";
 import { Bar as RBar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api";
-import { EmployeeModal } from "../components/Modals";
 import { ProjectDonut } from "../components/ProjectDonut";
 import { Avatar, Card, Empty, FACTOR_LABELS, PillButton, Ring, StatusPill } from "../components/ui";
-import type { EmployeeScores, Risk, SkillGap, Summary, Weights } from "../types";
+import type { Nav, ProjectProgress, Risk, SkillGap, Summary, Weights } from "../types";
 
 const TILES = [
-  { key: "manager", label: "Project Management", icon: FolderKanban, bg: "bg-tile-yellow", fg: "text-amber-700" },
+  { key: "projects", label: "Project Management", icon: FolderKanban, bg: "bg-tile-yellow", fg: "text-amber-700" },
   { key: "workforce", label: "Workforce Intelligence", icon: Users, bg: "bg-tile-blue", fg: "text-sky-700" },
   { key: "manager", label: "Task Allocation", icon: GitBranch, bg: "bg-tile-teal", fg: "text-teal-700" },
   { key: "risks", label: "Risk Radar", icon: Radar, bg: "bg-tile-peach", fg: "text-orange-700" },
   { key: "workforce", label: "Performance Evaluation", icon: Brain, bg: "bg-tile-lilac", fg: "text-violet-700" },
-  { key: "integrations", label: "Integrations", icon: Plug, bg: "bg-tile-blue", fg: "text-sky-700" },
+  { key: "settings", label: "Integrations", icon: Plug, bg: "bg-tile-blue", fg: "text-sky-700" },
   { key: "coordinator", label: "AI Coordinator", icon: Bot, bg: "bg-tile-mint", fg: "text-emerald-700" },
   { key: "audit", label: "Audit Ledger", icon: ScrollText, bg: "bg-tile-yellow", fg: "text-amber-700" },
 ];
 
 const DEPT_COLORS = ["#2f80ed", "#22c3d6", "#34c38f", "#f6a03b", "#e8577a", "#8b5cf6"];
 
-export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Summary; reload: () => void; onNav: (k: string) => void; toast: (m: string, k?: "ok" | "err") => void }) {
-  const [selected, setSelected] = useState<EmployeeScores | null>(null);
+export function AdminDashboard({ summary, projects, reload, onNav, toast }: { summary: Summary; projects: ProjectProgress[]; reload: () => void; onNav: Nav; toast: (m: string, k?: "ok" | "err") => void }) {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [gaps, setGaps] = useState<SkillGap[]>([]);
   const [weights, setWeights] = useState<Weights>(summary.weights);
@@ -33,9 +33,6 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
     api<{ gaps: SkillGap[] }>("/skills/gaps").then((r) => setGaps(r.gaps)).catch(() => {});
   }, [summary]);
   useEffect(() => setWeights(summary.weights), [summary.weights]);
-  useEffect(() => {
-    if (selected) setSelected(summary.employees.find((e) => e.employee_id === selected.employee_id) ?? null);
-  }, [summary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const departments = useMemo(() => {
     const m = new Map<string, { cap: number; used: number }>();
@@ -70,7 +67,8 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
     setWeights(out);
   };
 
-  const util = summary.employees.map((e) => ({ name: e.name.split(" ")[0], value: e.workload_score, status: e.status }));
+  const activeStaff = summary.employees.filter((e) => e.status !== "Inactive");
+  const util = activeStaff.map((e) => ({ name: e.name.split(" ")[0], value: e.workload_score, status: e.status }));
   const avgUtil = Math.round(summary.employees.filter((e) => e.status !== "On Leave").reduce((a, e) => a + e.workload_score, 0) /
     Math.max(1, summary.employees.filter((e) => e.status !== "On Leave").length));
   const fairness = Math.round((1 - summary.workload_gini_index) * 100);
@@ -80,7 +78,15 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_300px]">
       <div className="min-w-0 space-y-5">
-        <Card title={<span className="text-2xl font-semibold">Dashboard</span>} action={<PillButton onClick={() => onNav("coordinator")}>Ask AI</PillButton>}>
+        <AssistantPanel isAdmin projects={projects} reload={reload} onNav={onNav} height={300} />
+
+        <Card title="Project progress" action={<PillButton onClick={() => onNav("projects")}>View all</PillButton>}>
+          {projects.length === 0 ? <p className="text-[13px] text-slate-400">No active projects.</p> : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{projects.slice(0, 6).map((p) => <ProjectProgressCard key={p.project_id} p={p} onNav={onNav} />)}</div>
+          )}
+        </Card>
+
+        <Card title="Modules">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {TILES.map((t) => (
               <button key={t.label} onClick={() => onNav(t.key)} className={`flex items-center gap-3 rounded-xl ${t.bg} px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-md`}>
@@ -131,7 +137,7 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
               </thead>
               <tbody>
                 {shown.map((e) => (
-                  <tr key={e.employee_id} onClick={() => setSelected(e)} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50/70">
+                  <tr key={e.employee_id} onClick={() => onNav("employee", e.employee_id)} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50/70">
                     <td className="py-2.5"><div className="flex items-center gap-2.5"><Avatar name={e.name} id={e.employee_id} size={32} />
                       <div><div className="font-medium text-slate-800">{e.name}</div><div className="text-[11px] text-slate-400">{e.designation}</div></div></div></td>
                     <td>{e.skill_score}</td>
@@ -150,7 +156,7 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card title="Risk radar" action={<span className="text-[11px] text-slate-400">Agent 6</span>}>
+          <Card title={<span id="risks">Risk radar</span>} action={<span className="text-[11px] text-slate-400">Agent 6</span>}>
             <div className="space-y-2">
               {risks.length === 0 && <Empty>No active risks</Empty>}
               {risks.slice(0, 7).map((r, i) => (
@@ -221,7 +227,6 @@ export function AdminDashboard({ summary, reload, onNav, toast }: { summary: Sum
         </Card>
       </aside>
 
-      <EmployeeModal employee={selected} onClose={() => setSelected(null)} onChanged={reload} isAdmin />
     </div>
   );
 }

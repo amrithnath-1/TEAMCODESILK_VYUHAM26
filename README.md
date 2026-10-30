@@ -7,27 +7,32 @@ Vyuham is an enterprise AI workforce intelligence and coordination platform. It 
 ## Architecture
 
 ```
-React 18 + TS + Tailwind + Recharts      Admin · Project Manager · Employee Portal · AI Coordinator
-        │  REST (/api/v1, bearer token)
-FastAPI + Pydantic v2                     RBAC (ADMIN / STAFF), validation, idempotency
+React 18 + TS + Tailwind + Recharts       Sidebar app: Dashboard + AI chat, Projects, Allocation, Workforce, Profiles, Audit, Settings
+        │  REST (/api/v1, bearer token), polling every 10 to 15 seconds
+FastAPI + Pydantic v2                     Role checks, project access checks, validation, rate limits
         │
-7 logical agents (backend/app/agents.py)  1 Project Analysis · 2 Workforce Intelligence · 3 Task Allocation
-                                          4 Progress Monitoring · 5 Performance Evaluation · 6 Risk Prediction
-                                          7 Coordination Supervisor (router + HITL gatekeeper)
+assistant.py                              Claude tool loop or labelled offline router; every action passes one permission-checked registry
+workflow.py / progress.py / workforce.py  Document analysis, specification, plans; verified progress; skill scores, resumes, links
+agents.py / services.py                   7 logical agents; shared operations used by REST and chat
+engine.py                                 Hard constraints, weighted scoring, DAG and critical path, Gini (no LLM involved)
         │
-Deterministic engine (engine.py)          hard-constraint filter → weighted scorer → DAG topo sort /
-                                          critical path → Gini fairness
-        │
-In-memory store + SHA-256 hash-chained audit ledger (state.py, audit.py)
+SQLite (backend/data/vyuham.db)           Versioned migrations; FTS5 document index; hash-chained audit ledger
 ```
 
-**Hybrid allocation:** the LLM never picks an assignee. The Python engine filters hard constraints (leave, capacity, the 95% ceiling, critical skills, DAG order) and ranks candidates with configurable weights:
+**The product loop:** upload documents → extract and index → analyse → answer clarification questions → approve the specification → generate and edit a plan → approve (creates tasks once) → allocate → track verified progress → evaluate → adapt.
+
+**Hybrid allocation:** the LLM never picks an assignee. The Python engine applies hard constraints (leave, capacity, the 95% ceiling, critical skills, dependency order) and ranks candidates with configurable weights:
 
 `Suitability = 0.30·Skill + 0.20·Availability + 0.20·Balance + 0.15·Priority + 0.10·Performance + 0.05·Growth`
 
-Critical tasks, and assignments that push someone above 85% load, go to a **PENDING HITL approval** first.
+Critical tasks, and assignments that push someone above 85% load, wait for human approval.
 
-**Six separate scores** for each employee: skill, performance, availability, workload, collaboration, and task suitability (per task). New hires are shown as *Insufficient Evidence (New Hire Onboarding)* instead of getting a low score.
+**Progress calculation:** each task is weighted by `estimated hours × priority factor` (Critical 1.5, High 1.2, Medium 1.0, Low 0.8).
+Verified % is the weight of tasks whose deliverable a manager accepted, divided by total weight. In-progress, blocked and pending are shown as separate bands. Employee and manager percentages are shown beside verified progress and never added to it.
+
+**Skill scores (0 to 10):** separate from performance, availability and workload. Each lists its evidence, marked verified, employee-reported or inferred, with a confidence level and any missing evidence. A single unverified mention gets no number.
+
+**Document retrieval:** SQLite FTS5 with BM25, restricted to one project. No embedding model is used: Claude's API does not provide embeddings, and keyword retrieval is sufficient at per-project scale. Document text is always treated as untrusted data, and suspected embedded instructions are flagged.
 
 ## Run locally
 
@@ -51,7 +56,15 @@ cd backend && python -m venv .venv && .venv/Scripts/python -m pip install -r req
 cd frontend && npm install && npm run dev
 ```
 
-Optional: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Agent 1 then uses Claude to break project briefs into tasks, and validates the result before using it. Without a key, a deterministic skill catalog is used, so the demo works offline.
+### Connecting Claude
+
+Copy `.env.example` to `.env`, set `ANTHROPIC_API_KEY`, and restart the backend. The default model is `claude-opus-5-5` (change it with `AF07_MODEL`). The key stays on the server.
+
+Without a key, the app runs in **offline mode**: chat, analysis, plans and resume extraction use built-in rules on your real data, and every result is labelled `rule-based`.
+
+### Data
+
+Data is stored in `backend/data/` (not committed). The **Reset all demo data** button in Settings restores the seeded state. Sample files to try are in `docs/samples/`.
 
 ## Demo accounts (seeded, demo only)
 
@@ -60,15 +73,16 @@ Optional: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Agent 1 the
 | Admin login (Enterprise Admin / PM) | `admin` | `Admin@2026` |
 | Staff login | any employee's first name, e.g. `sneha`, `vikram`, `kabir` | `Staff@2026` |
 
-## Demo script (≈3 minutes)
+## Demo script
 
-1. **Admin → Project Manager → Run AI allocation.** All 8 CRM tasks are assigned and the workload Gini goes from **0.1584 to 0.1369**. Meera (97.5% load) is blocked by the capacity guardrail, and Kabir is protected as a new hire.
-2. Click any DAG card to see every candidate's six-factor breakdown and the reasons others were disqualified.
-3. **Approve** the Critical tasks in the HITL queue.
-4. **One-click disruption:** mark Vikram *On Leave*. Agent 6 classifies the risk and Agent 7 proposes a cascade reassignment. Approve it, and the action is executed and verified.
-5. **AI Coordinator:** try *"Who should do TSK-104?"*, *"What if Priya takes TSK-104?"* or *"Is the workload fair?"*.
-6. **Staff login (sneha):** shows assigned tasks with a *"Why me?"* explanation, the six separate scores, verified evidence, progress updates and an evidence dispute.
-7. **Audit Ledger:** every action is hash-chained, and *Re-verify chain* proves nothing was altered.
+1. **Admin → Projects → New project**, then upload the files from `docs/samples/` on the **Documents** tab.
+2. On the dashboard chat, choose the project and ask *"Analyze the documents and prepare the execution plan"*. It reports the 8-week vs 12-week conflict and asks clarification questions.
+3. Answer them, approve the specification, then ask *"Generate the project plan"*. Review or edit it on the **Plan** tab and approve it. Tasks are created once.
+4. **Tasks → Run allocation**, then approve items under **Allocation & Approvals**.
+5. **Staff login (sneha):** ask *"What should I prioritize today?"*, report progress, submit a task for review. Verified progress does not move yet.
+6. **Admin → project → Tasks → Accept deliverable.** The donut's verified band moves. Enter a manager report of 70% and open **Evaluation** to see the gap flagged.
+7. In chat, say *"Vikram is on sick leave for 3 days"* and approve the card. Reassignment proposals appear for approval.
+8. **Audit Ledger:** every action is hash-chained, and *Re-verify chain* confirms nothing was altered.
 
 ### Reference allocation (verified by `backend/tests`)
 
@@ -89,7 +103,15 @@ Optional: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Agent 1 the
 cd backend && .venv/Scripts/python -m pytest -q
 ```
 
-The tests cover the reference allocation, the capacity guardrail and new-hire protection, HITL gating, disruption and approval execution, double-approval rejection, duplicate disruptions and integration events, RBAC (staff vs admin), weight validation, audit tamper detection, concurrent allocation, brief-to-DAG decomposition, and chat routing.
+The tests cover the reference allocation, hard constraints, approvals, RBAC, audit tamper detection, concurrency, document formats and validation, cross-project isolation, prompt-injection handling, the clarification-to-plan flow, verified progress, restart persistence, skill evidence, resume screening, integration status, employee management, and the assistant in offline mode and with a scripted Claude client.
+
+## Known limitations
+
+- Capacity is modelled per week, from the reference formulas. Long projects can show capacity gaps because all their work is compared with one week of free hours.
+- Non-critical tasks can go to someone with a partial skill match, as the reference allocation requires. The gap is shown on the suggestion.
+- Core entities are saved as a JSON snapshot in SQLite after each change; new features use normal tables. This suits one server, not several.
+- Single organization. Calendar, Slack, Jira, LinkedIn, Instagram and X are not connected; only GitHub public data is read.
+- Scanned PDFs need OCR before they can be indexed.
 
 ## Privacy and governance
 

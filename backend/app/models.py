@@ -79,8 +79,10 @@ class Project(BaseModel):
     business_objective: str
     priority: Priority
     deadline_days: int
-    status: str = "Active"
+    status: str = "Active"     # Draft | Active | Completed | Archived
     created_by: str = "SYSTEM"
+    org_id: str = "ORG-1"
+    start_date: Optional[str] = None
 
 
 class Task(BaseModel):
@@ -96,7 +98,18 @@ class Task(BaseModel):
     deliverable_criteria: str
     status: str = "READY_FOR_ALLOCATION"
     assigned_to: Optional[str] = None
-    progress_pct: int = 0
+    progress_pct: int = 0      # employee-reported; never counted as verified progress
+    phase: Optional[str] = None
+    milestone: Optional[str] = None
+    complexity: int = 3
+    acceptance_criteria: List[str] = []
+    deliverables: List[str] = []
+    subtasks: List[str] = []
+    suggested_assignee: Optional[str] = None
+    blocked: bool = False
+    blocked_reason: Optional[str] = None
+    plan_id: Optional[str] = None
+    activity: List[Dict] = []
 
 
 class TaskDependency(BaseModel):
@@ -272,6 +285,169 @@ class WhatIfRequest(BaseModel):
 class ProgressUpdateRequest(BaseModel):
     progress_pct: int = Field(ge=0, le=100)
     status: Optional[Literal["IN_PROGRESS", "DELIVERABLE_IN_REVIEW"]] = None
+
+
+class ProjectDraftRequest(BaseModel):
+    name: str = Field(min_length=3, max_length=120)
+    objective: str = Field(default="", max_length=4000)
+    priority: Priority = "High"
+    deadline_days: int = Field(default=30, ge=3, le=730)
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=120)
+    objective: Optional[str] = Field(default=None, max_length=4000)
+    priority: Optional[Priority] = None
+    deadline_days: Optional[int] = Field(default=None, ge=3, le=730)
+    status: Optional[Literal["Draft", "Active", "Completed", "Archived"]] = None
+
+
+class ClarificationAnswer(BaseModel):
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+class SpecUpdateRequest(BaseModel):
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+
+class PlanTask(BaseModel):
+    key: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=3, max_length=160)
+    description: str = Field(default="", max_length=1500)
+    phase: str = Field(default="Build", max_length=80)
+    milestone: str = Field(default="Delivery", max_length=120)
+    required_skills: Dict[str, SkillLevel]
+    priority: Priority = "Medium"
+    estimated_hours: float = Field(gt=0, le=400)
+    complexity: int = Field(default=3, ge=1, le=5)
+    deadline_days: int = Field(ge=1, le=730)
+    depends_on_keys: List[str] = []
+    acceptance_criteria: List[str] = []
+    deliverables: List[str] = []
+    subtasks: List[str] = []
+    suggested_assignee_id: Optional[str] = None
+    suggested_assignee_name: Optional[str] = None
+    suggestion_reason: Optional[str] = None
+
+
+class PlanBody(BaseModel):
+    summary: str = Field(default="", max_length=4000)
+    tasks: List[PlanTask] = Field(min_length=1, max_length=80)
+    risks: List[str] = []
+    resource_gaps: List[str] = []
+    phases: List[str] = []
+    milestones: List[Dict] = []
+
+
+class TaskCreateRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=160)
+    description: str = Field(default="", max_length=1500)
+    required_skills: Dict[str, SkillLevel] = Field(min_length=1)
+    estimated_hours: float = Field(gt=0, le=400)
+    priority: Priority = "Medium"
+    deadline_days: int = Field(default=14, ge=1, le=730)
+    dependencies: List[str] = []
+    phase: Optional[str] = None
+    milestone: Optional[str] = None
+    acceptance_criteria: List[str] = []
+    deliverables: List[str] = []
+
+
+class TaskUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=3, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=1500)
+    priority: Optional[Priority] = None
+    deadline_days: Optional[int] = Field(default=None, ge=1, le=730)
+    estimated_hours: Optional[float] = Field(default=None, gt=0, le=400)
+    blocked: Optional[bool] = None
+    blocked_reason: Optional[str] = Field(default=None, max_length=300)
+    acceptance_criteria: Optional[List[str]] = None
+    deliverables: Optional[List[str]] = None
+
+
+class TaskAssignRequest(BaseModel):
+    employee_id: str
+    reason: str = Field(default="Assigned by manager", max_length=300)
+
+
+class ReworkRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ProgressReportRequest(BaseModel):
+    reported_pct: float = Field(ge=0, le=100)
+    note: str = Field(default="", max_length=1000)
+
+
+EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+class EmployeeCreateRequest(BaseModel):
+    name: str = Field(min_length=3, max_length=80)
+    email: str = Field(pattern=EMAIL_RE, max_length=120)
+    department: str = Field(min_length=2, max_length=60)
+    designation: str = Field(min_length=2, max_length=80)
+    manager: str = Field(default="Anil Menon", max_length=80)
+    years_exp: float = Field(default=0, ge=0, le=60)
+    weekly_capacity_hrs: float = Field(default=40, gt=0, le=60)
+    meeting_hrs: float = Field(default=0, ge=0, le=40)
+    skills: List[EmployeeSkill] = []
+    password: str = Field(min_length=8, max_length=128)
+
+
+class EmployeeUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=80)
+    email: Optional[str] = Field(default=None, pattern=EMAIL_RE, max_length=120)
+    department: Optional[str] = Field(default=None, min_length=2, max_length=60)
+    designation: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    manager: Optional[str] = Field(default=None, max_length=80)
+    years_exp: Optional[float] = Field(default=None, ge=0, le=60)
+    weekly_capacity_hrs: Optional[float] = Field(default=None, gt=0, le=60)
+    meeting_hrs: Optional[float] = Field(default=None, ge=0, le=40)
+    skills: Optional[List[EmployeeSkill]] = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    bio: str = Field(default="", max_length=1500)
+    education: List[str] = []
+    certifications: List[str] = []
+    previous_projects: List[str] = []
+    portfolio_urls: List[str] = []
+
+
+class ProfessionalLinkRequest(BaseModel):
+    provider: Literal["github", "linkedin", "instagram", "x", "other"]
+    value: str = Field(min_length=2, max_length=300)
+
+
+class SkillChallengeRequest(BaseModel):
+    skill: str = Field(min_length=1, max_length=80)
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class ChallengeResolveRequest(BaseModel):
+    resolution: Literal["Reevaluated", "Rejected"]
+    note: str = Field(default="", max_length=500)
+
+
+class ChangeRequestCreate(BaseModel):
+    kind: Literal["reassignment", "deadline_change", "leave"]
+    task_id: Optional[str] = None
+    details: str = Field(min_length=3, max_length=1000)
+
+
+class ChangeRequestResolve(BaseModel):
+    approve: bool
+    note: str = Field(default="", max_length=500)
+    new_deadline_days: Optional[int] = Field(default=None, ge=1, le=730)
+    leave_days: int = Field(default=3, ge=1, le=60)
+
+
+class AssistantChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_id: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class IntegrationEventRequest(BaseModel):

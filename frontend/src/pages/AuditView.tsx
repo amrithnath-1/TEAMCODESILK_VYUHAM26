@@ -1,17 +1,17 @@
 import { ShieldCheck, ShieldX } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-import { api } from "../api";
+import { api, apiDownload } from "../api";
 import { Card, PillButton } from "../components/ui";
 import type { AuditEntry } from "../types";
 
-export function AuditView({ refreshKey }: { refreshKey: unknown }) {
+export function AuditView({ refreshKey, toast }: { refreshKey: unknown; toast: (m: string, k?: "ok" | "err") => void }) {
   const [data, setData] = useState<{ entries: AuditEntry[]; verification: { valid: boolean; entries: number; broken_at: string | null; head?: string } } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const load = () => api("/audit?limit=200").then(setData).catch(() => {});
   useEffect(() => { load(); }, [refreshKey]);
 
   return (
-    <Card title="Immutable audit ledger" action={<PillButton onClick={load}>Re-verify chain</PillButton>}>
+    <Card title="Immutable audit ledger" action={<div className="flex gap-2"><PillButton onClick={() => apiDownload("/audit/export.csv", "audit-ledger.csv").catch((e) => toast(e.message, "err"))}>Export CSV</PillButton><PillButton onClick={() => { load(); toast("Chain re-verified."); }}>Re-verify chain</PillButton></div>}>
       {data && (
         <div className={`mb-4 flex items-center gap-3 rounded-xl p-4 ${data.verification.valid ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
           {data.verification.valid ? <ShieldCheck /> : <ShieldX />}

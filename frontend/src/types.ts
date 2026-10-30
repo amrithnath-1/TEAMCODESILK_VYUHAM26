@@ -60,6 +60,16 @@ export interface Task {
   dependency_status?: { task_id: string; status: string }[];
   why_me?: string | null;
   suitability_score?: number | null;
+  phase?: string | null;
+  milestone?: string | null;
+  complexity?: number;
+  acceptance_criteria: string[];
+  deliverables: string[];
+  subtasks: string[];
+  suggested_assignee?: string | null;
+  blocked: boolean;
+  blocked_reason?: string | null;
+  activity: { at: string; actor: string; text: string }[];
 }
 
 export interface Candidate {
@@ -153,6 +163,8 @@ export interface Summary {
   decisions: { id: string; agent_name: string; recommended_action: string; risk_level: string; requires_approval: boolean }[];
   recent_audits: AuditEntry[];
   ledger_status: { valid: boolean; entries: number; broken_at: string | null; head?: string };
+  change_requests: ChangeRequest[];
+  ai: { configured: boolean; model: string; setup: string | null };
 }
 
 export interface Allocation {
@@ -192,3 +204,171 @@ export interface ChatMessage {
   agent?: string;
   trace?: string[];
 }
+
+export interface ProjectProgress {
+  project_id: string;
+  name: string;
+  status: string;
+  priority: string;
+  objective?: string;
+  bands_pct: { verified: number; in_progress: number; blocked: number; pending: number };
+  completion_pct: number;
+  method: string;
+  reported_by_employees_pct: number;
+  reported_by_manager: { reported_pct: number; note: string; reported_by: string; created_at: string } | null;
+  start_date: string;
+  deadline: string;
+  days_remaining: number;
+  expected_pct_by_schedule: number;
+  health: string;
+  current_milestone: string | null;
+  milestones: { name: string; done: number; total: number }[];
+  open_tasks: number;
+  total_tasks: number;
+  overdue_tasks: string[];
+  critical_blockers: { task_id: string; title: string; reason: string }[];
+  last_update: string | null;
+  history: { verified_pct: number; in_progress_pct: number; blocked_pct: number; pending_pct: number; created_at: string }[];
+}
+
+export interface DocumentRow {
+  id: string;
+  filename: string;
+  version: number;
+  size: number;
+  ext: string;
+  status: string;
+  error: string | null;
+  is_current: number;
+  chunk_count: number;
+  suspicious_count: number;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
+export interface EvidenceItem { text: string; document: string; location: string }
+
+export interface Clarification {
+  id: string;
+  project_id: string;
+  question: string;
+  why: string | null;
+  options: string[];
+  answer: string | null;
+  status: string;
+}
+
+export interface Spec {
+  project_id: string;
+  status: string;
+  source: string | null;
+  analysis: (Record<string, EvidenceItem[]> & { summary?: any; contradictions?: any; manager_notes?: any; truncated_input?: any }) | null;
+  clarifications: Clarification[];
+  approved_by?: string | null;
+}
+
+export interface PlanTask {
+  key: string;
+  title: string;
+  description: string;
+  phase: string;
+  milestone: string;
+  required_skills: Record<string, string>;
+  priority: string;
+  estimated_hours: number;
+  complexity: number;
+  deadline_days: number;
+  depends_on_keys: string[];
+  acceptance_criteria: string[];
+  deliverables: string[];
+  subtasks: string[];
+  suggested_assignee_id: string | null;
+  suggested_assignee_name: string | null;
+  suggestion_reason: string | null;
+}
+
+export interface Plan {
+  id: string;
+  project_id: string;
+  version: number;
+  source: string;
+  status: string;
+  plan: { summary: string; tasks: PlanTask[]; risks: string[]; resource_gaps: string[]; phases: string[]; milestones: { name: string; due_day: number }[] };
+}
+
+export interface SkillAssessment {
+  skill: string;
+  score: number | null;
+  confidence: string;
+  evidence: { kind: string; source: string; detail: string }[];
+  missing_evidence: string[];
+  last_evaluated: string | null;
+  history?: { score: number | null; at: string }[];
+}
+
+export interface ProLink {
+  provider: string;
+  label: string;
+  mode: string;
+  setup_note: string | null;
+  status: string;
+  status_detail: string | null;
+  url: string | null;
+  handle: string | null;
+  last_checked: string | null;
+  data: { languages?: Record<string, number>; public_repos?: number; recent_repositories?: { name: string; language: string | null; url: string }[] };
+}
+
+export interface ResumeResult {
+  id: string;
+  filename: string;
+  source: string;
+  uploaded_at: string;
+  extracted: { skills: string[]; experience: string[]; education: string[]; certifications: string[]; projects: string[]; achievements: string[] };
+  assessment: {
+    label: string; criteria: string; target: string | null; skill_coverage_pct: number | null; matched_keywords: string[]; missing_keywords: string[];
+    structure_score: number; skills_found: number; quantified_results_found: number; word_count: number; formatting_issues: string[]; suggestions: string[];
+  };
+}
+
+export interface Intelligence {
+  employee: EmployeeScores;
+  profile: { bio: string; education: string[]; certifications: string[]; previous_projects: string[]; portfolio_urls: string[] };
+  skills: SkillAssessment[];
+  resume: ResumeResult | null;
+  links: ProLink[];
+  challenges: { id: string; skill: string; reason: string; status: string; resolution: string | null; created_at: string }[];
+  completed: Task[];
+}
+
+export interface NotificationRow {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link_view: string | null;
+  link_id: string | null;
+  is_read: number;
+  created_at: string;
+}
+
+export interface ChangeRequest {
+  id: string;
+  employee_id: string;
+  kind: string;
+  task_id: string | null;
+  details: string;
+  status: string;
+  resolution: string | null;
+  created_at: string;
+}
+
+export interface AssistantAction {
+  id: string;
+  action: string;
+  summary: string;
+  status: string;
+  result: { verified: boolean; message: string; project_id?: string } | null;
+}
+
+export type Nav = (view: string, id?: string) => void;

@@ -1,11 +1,11 @@
-import { AlertTriangle, BadgeCheck, CheckCircle2, CircleSlash, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CircleSlash } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Candidate, EmployeeScores, Task } from "../types";
-import { Avatar, Bar, FACTOR_LABELS, Modal, PillButton, PriorityBadge, StatusPill } from "./ui";
+import { Avatar, Bar, FACTOR_LABELS, Modal, PillButton, PriorityBadge } from "./ui";
 
 /** Full ranked candidate list for one task with every factor and every hard-constraint violation. */
-export function CandidateModal({ task, onClose }: { task: Task | null; onClose: () => void }) {
+export function CandidateModal({ task, onClose, onAssigned }: { task: Task | null; onClose: () => void; onAssigned?: (message: string) => void }) {
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -37,6 +37,14 @@ export function CandidateModal({ task, onClose }: { task: Task | null; onClose: 
               <div className="text-right">
                 <div className={`text-lg font-bold ${c.eligible ? "text-slate-800" : "text-rose-500"}`}>{c.suitability_score}</div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-400">{c.eligible ? "eligible" : "disqualified"}</div>
+                {onAssigned && c.eligible && task?.assigned_to !== c.employee_id && (
+                  <PillButton className="mt-1" onClick={() => {
+                    if (!task) return;
+                    api(`/tasks/${task.id}/assign`, { body: { employee_id: c.employee_id, reason: "Selected from the candidate ranking" } })
+                      .then(() => onAssigned(`${task.id} assigned to ${c.employee_name}.`)).catch((e) => setErr(e.message));
+                  }}>Assign</PillButton>
+                )}
+                {task?.assigned_to === c.employee_id && <div className="mt-1 text-[10px] font-medium text-emerald-600">Current owner</div>}
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-3">
@@ -52,69 +60,6 @@ export function CandidateModal({ task, onClose }: { task: Task | null; onClose: 
           </div>
         ))}
       </div>
-    </Modal>
-  );
-}
-
-/** 6-score breakdown with evidence; admins can resolve disputes here. */
-export function EmployeeModal({ employee, onClose, onChanged, isAdmin }: { employee: EmployeeScores | null; onClose: () => void; onChanged: () => void; isAdmin: boolean }) {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  useEffect(() => setMsg(null), [employee]);
-  if (!employee) return null;
-  const resolve = async (resolution: "Upheld" | "Rejected") => {
-    setBusy(true);
-    try {
-      await api(`/employees/${employee.employee_id}/dispute/resolve`, { body: { resolution, note: `Resolved from admin console` } });
-      setMsg(`Dispute ${resolution.toLowerCase()} and written to the audit ledger.`);
-      onChanged();
-    } catch (e: any) {
-      setMsg(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal open onClose={onClose} wide title={<span className="flex items-center gap-3"><Avatar name={employee.name} id={employee.employee_id} />{employee.name}</span>}>
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-        <span>{employee.designation}</span>·<span>{employee.department}</span>·<span>{employee.years_exp} yrs</span>·<StatusPill status={employee.status} />
-        <span className="rounded-full bg-brand-50 px-2.5 py-1 font-medium text-brand-700">{employee.level}</span>
-      </div>
-      <ScoreGrid e={employee} />
-      <h4 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Skills & evidence</h4>
-      <div className="grid gap-2 md:grid-cols-2">
-        {employee.skills.map((s) => (
-          <div key={s.skill_name} className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
-            {s.is_verified ? <BadgeCheck size={16} className="mt-0.5 text-emerald-500" /> : <ShieldAlert size={16} className="mt-0.5 text-amber-500" />}
-            <div>
-              <div className="text-[13px] font-medium text-slate-800">{s.skill_name} · {s.level}</div>
-              <div className="text-[11px] text-slate-500">{s.is_verified ? "Verified" : "Self-reported (×0.82)"} — {s.evidence_source}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <h4 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Outcome evidence (no surveillance signals)</h4>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {Object.entries(employee.evidence_metrics).map(([k, v]) => (
-          <div key={k} className="rounded-xl border border-slate-100 p-3">
-            <div className="text-lg font-semibold text-slate-800">{v}</div>
-            <div className="text-[10px] capitalize leading-tight text-slate-500">{k.replace(/_/g, " ")}</div>
-          </div>
-        ))}
-      </div>
-      {employee.dispute_status !== "None" && (
-        <div className="mt-5 rounded-xl bg-amber-50 p-4 text-sm">
-          <div className="font-medium text-amber-800">Dispute: {employee.dispute_status}</div>
-          {employee.dispute_note && <p className="mt-1 text-amber-700">“{employee.dispute_note}”</p>}
-          {isAdmin && employee.dispute_status === "Pending Manager Review" && (
-            <div className="mt-3 flex gap-2">
-              <PillButton variant="success" disabled={busy} onClick={() => resolve("Upheld")}><CheckCircle2 size={14} />Uphold</PillButton>
-              <PillButton disabled={busy} onClick={() => resolve("Rejected")}>Reject</PillButton>
-            </div>
-          )}
-        </div>
-      )}
-      {msg && <p className="mt-3 text-sm text-slate-600">{msg}</p>}
     </Modal>
   );
 }

@@ -1,9 +1,11 @@
-import { BadgeCheck, CalendarClock, MessageSquareWarning, ShieldAlert, Sprout, Target } from "lucide-react";
+import { BadgeCheck, CalendarClock, MessageSquareWarning, Send, ShieldAlert, Sprout, Target } from "lucide-react";
+import { AssistantPanel } from "../components/AssistantPanel";
+import { ProjectProgressCard } from "../components/ProgressDonut";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { ScoreGrid } from "../components/Modals";
 import { Card, Empty, PillButton, PriorityBadge, Ring, StatusPill } from "../components/ui";
-import type { EmployeeScores, Task } from "../types";
+import type { ChangeRequest, EmployeeScores, Nav, ProjectProgress, Task } from "../types";
 
 interface Portal {
   scores: EmployeeScores;
@@ -16,16 +18,18 @@ interface Portal {
     excluded_signals: string[];
   };
   growth: { skill: string; recommendation: string }[];
+  change_requests: ChangeRequest[];
 }
 
-export function StaffPortal({ toast, onPending }: { toast: (m: string, k?: "ok" | "err") => void; onPending: (n: number) => void }) {
+export function StaffPortal({ toast, projects, reload, onNav, refreshKey }: { toast: (m: string, k?: "ok" | "err") => void; projects: ProjectProgress[]; reload: () => void; onNav: Nav; refreshKey: unknown }) {
   const [data, setData] = useState<Portal | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [dispute, setDispute] = useState("");
   const [progress, setProgress] = useState<Record<string, number>>({});
 
-  const load = useCallback(() => api<Portal>("/me/portal").then((d) => { setData(d); onPending(0); }).catch((e) => setErr(e.message)), [onPending]);
-  useEffect(() => { load(); }, [load]);
+  const [req, setReq] = useState({ kind: "reassignment", task_id: "", details: "" });
+  const load = useCallback(() => api<Portal>("/me/portal").then(setData).catch((e) => setErr(e.message)), []);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   if (err) return <Empty>{err}</Empty>;
   if (!data) return <div className="p-10 text-center text-sm text-slate-400">Loading your portal…</div>;
@@ -37,6 +41,7 @@ export function StaffPortal({ toast, onPending }: { toast: (m: string, k?: "ok" 
       await api(`/tasks/${t.id}/progress`, { body: { progress_pct: pct, status: pct >= 100 ? "DELIVERABLE_IN_REVIEW" : "IN_PROGRESS" } });
       toast(pct >= 100 ? `${t.id} submitted for review` : `${t.id} progress saved (${pct}%)`);
       load();
+      reload();
     } catch (e: any) {
       toast(e.message, "err");
     }
@@ -52,9 +57,22 @@ export function StaffPortal({ toast, onPending }: { toast: (m: string, k?: "ok" 
     }
   };
 
+  const sendRequest = async () => {
+    try {
+      await api("/change-requests", { body: { kind: req.kind, task_id: req.task_id || null, details: req.details } });
+      setReq({ ...req, details: "" });
+      toast("Request sent to your manager. Nothing changes until they approve it.");
+      load();
+    } catch (e: any) {
+      toast(e.message, "err");
+    }
+  };
+
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
       <div className="min-w-0 space-y-5">
+        <AssistantPanel isAdmin={false} projects={projects} reload={() => { load(); reload(); }} onNav={onNav} height={260} />
+        {projects.length > 0 && <div className="grid gap-4 sm:grid-cols-2">{projects.map((p) => <ProjectProgressCard key={p.project_id} p={p} onNav={onNav} />)}</div>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -149,6 +167,14 @@ export function StaffPortal({ toast, onPending }: { toast: (m: string, k?: "ok" 
           <div className="mb-2 flex flex-wrap gap-1">{s.learning_goals.map((g) => <span key={g} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{g}</span>)}</div>
           {data.growth.length ? data.growth.map((g) => <p key={g.skill} className="text-[12px] text-slate-600">↗ {g.recommendation}</p>)
             : <p className="text-[12px] text-slate-400">No open demand for your learning goals right now.</p>}
+        </Card>
+
+        <Card title={<span className="flex items-center gap-2"><Send size={15} className="text-brand-500" />Request a change</span>}>
+          <label className="block text-[12px] text-slate-600">Type<select value={req.kind} onChange={(e) => setReq({ ...req, kind: e.target.value })} className="field"><option value="reassignment">Reassignment</option><option value="deadline_change">Deadline change</option><option value="leave">Leave</option></select></label>
+          {req.kind !== "leave" && <label className="mt-2 block text-[12px] text-slate-600">Task<select value={req.task_id} onChange={(e) => setReq({ ...req, task_id: e.target.value })} className="field"><option value="">Choose a task</option>{data.tasks.map((t) => <option key={t.id} value={t.id}>{t.id}</option>)}</select></label>}
+          <label className="mt-2 block text-[12px] text-slate-600">Details<textarea rows={2} value={req.details} onChange={(e) => setReq({ ...req, details: e.target.value })} className="field" /></label>
+          <PillButton variant="primary" className="mt-2" disabled={req.details.trim().length < 3 || (req.kind !== "leave" && !req.task_id)} onClick={sendRequest}>Send to manager</PillButton>
+          {data.change_requests.slice(0, 4).map((r) => <p key={r.id} className="mt-2 border-t border-slate-50 pt-2 text-[11px] text-slate-500"><b className="capitalize">{r.kind.replace("_", " ")}</b>: {r.status}{r.resolution ? `. ${r.resolution}` : ""}</p>)}
         </Card>
 
         <Card title={<span className="flex items-center gap-2"><MessageSquareWarning size={16} className="text-amber-500" />Review & dispute</span>}>

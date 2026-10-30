@@ -15,7 +15,7 @@ HITL_LOAD_THRESHOLD = 85.0
 
 # ------------------------------------------------------------ 4.1 capacity
 def net_free_hrs(emp: Employee) -> float:
-    if emp.status == "On Leave":
+    if emp.status in ("On Leave", "Inactive"):
         return 0.0
     return max(0.0, round(emp.weekly_capacity_hrs - (emp.committed_hrs + emp.meeting_hrs + emp.leave_hrs), 2))
 
@@ -125,6 +125,8 @@ def score_candidate_for_task(emp: Employee, task: Task, weights: WeightConfig) -
     violations: List[str] = []
     warnings: List[str] = []
 
+    if emp.status == "Inactive":
+        violations.append("Employee record is INACTIVE.")
     if emp.status == "On Leave":
         violations.append("Employee is currently ON_LEAVE.")
     free = net_free_hrs(emp)
@@ -210,7 +212,7 @@ def score_candidate_for_task(emp: Employee, task: Task, weights: WeightConfig) -
 def rank_candidates(employees: List[Employee], task: Task, weights: WeightConfig,
                     exclude: Optional[str] = None) -> List[Dict]:
     """Rank candidates; ties broken by lower post-load, then stable employee id."""
-    cands = [score_candidate_for_task(e, task, weights) for e in employees if e.id != exclude]
+    cands = [score_candidate_for_task(e, task, weights) for e in employees if e.id != exclude and e.status != "Inactive"]
     cands.sort(key=lambda c: (not c["eligible"], -c["suitability_score"], c["utilization_after_pct"], c["employee_id"]))
     return cands
 
@@ -225,7 +227,7 @@ def gini(values: List[float]) -> float:
 
 
 def team_gini(employees: List[Employee]) -> float:
-    return gini([util_pct(e) for e in employees if e.status != "On Leave"])
+    return gini([util_pct(e) for e in employees if e.status not in ("On Leave", "Inactive")])
 
 
 # ------------------------------------------------------------ DAG

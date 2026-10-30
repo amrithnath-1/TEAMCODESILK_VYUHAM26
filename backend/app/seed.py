@@ -1,4 +1,5 @@
 """Reference simulation data: 12 employees, 8 CRM tasks, roles, evidence and demo users."""
+from datetime import date
 from typing import List
 
 from .auth import hash_password
@@ -94,11 +95,25 @@ def seed_employees() -> List[Employee]:
 
 
 def seed_projects() -> List[Project]:
-    return [Project(id="PRJ-CRM", name="Enterprise CRM Platform", priority="Critical", deadline_days=30,
+    return [Project(id="PRJ-CRM", name="Enterprise CRM Platform", priority="Critical", deadline_days=30, start_date=date.today().isoformat(),
                     business_objective="Launch a multi-tenant CRM with AI lead scoring for 40 enterprise sales teams within 30 days.")]
 
 
+SEED_PLAN = {"TSK-101": ("Discovery", "Requirements signed off"), "TSK-102": ("Design", "Architecture ready"), "TSK-103": ("Design", "Architecture ready"),
+             "TSK-104": ("Build", "Core platform ready"), "TSK-105": ("Build", "Core platform ready"), "TSK-106": ("Build", "Core platform ready"),
+             "TSK-107": ("Verification", "Release candidate verified"), "TSK-108": ("Release", "Production launch")}
+
+
 def seed_tasks() -> List[Task]:
+    tasks = _seed_tasks()
+    for t in tasks:
+        t.phase, t.milestone = SEED_PLAN[t.id]
+        t.acceptance_criteria = [t.deliverable_criteria]
+        t.deliverables = [t.deliverable_criteria]
+    return tasks
+
+
+def _seed_tasks() -> List[Task]:
     return [
         Task(id="TSK-101", project_id="PRJ-CRM", title="CRM Requirements & Domain Modeling", description="Define enterprise CRM entities, RBAC scopes, and SLA specs",
              required_skills={"Requirements Analysis": "Advanced"}, estimated_hours=10, priority="High", deadline_days=4, deliverable_criteria="Approved PRD + Domain Schema"),

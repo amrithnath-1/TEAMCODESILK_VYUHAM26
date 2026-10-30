@@ -1,18 +1,27 @@
 """AF-07 Enterprise Workforce Intelligence & Task Allocation API (API gateway + RBAC layer)."""
+import csv
+from datetime import date
+import io
 import os
-from typing import Dict
+import time
+from collections import defaultdict, deque
+from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
-from . import engine
+from . import assistant, db, documents, engine, llm, progress as progress_mod, services, workflow, workforce as workforce_mod
 from .agents import (CoordinationAgent, PerformanceEvaluationAgent, ProgressMonitoringAgent, ProjectAnalysisAgent,
                      RiskPredictionAgent, TaskAllocationAgent, WorkforceIntelligenceAgent)
 from .audit import utcnow
 from .auth import assert_self_or_admin, current_user, issue_token, require_admin, verify_password
 from .models import (ChatQueryRequest, DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
-                     IntegrationEvent, IntegrationEventRequest, LoginRequest, ProgressUpdateRequest, Project,
-                     ProjectCreateRequest, Task, WeightConfig, WhatIfRequest)
+                     AssistantChatRequest, ChallengeResolveRequest, ChangeRequestCreate, ChangeRequestResolve, ClarificationAnswer,
+                     EmployeeCreateRequest, EmployeeUpdateRequest, IntegrationEvent, IntegrationEventRequest, LoginRequest,
+                     ProfessionalLinkRequest, ProfileUpdateRequest, ProgressReportRequest, ProgressUpdateRequest, Project, ProjectCreateRequest,
+                     ProjectDraftRequest, ProjectUpdateRequest, ReworkRequest, SkillChallengeRequest, SpecUpdateRequest, Task, TaskAssignRequest,
+                     TaskCreateRequest, TaskUpdateRequest, WeightConfig, WhatIfRequest)
 from .state import STORE
 
 app = FastAPI(title="AF-07 Enterprise Workforce Intelligence & Task Allocation API", version="1.0.0")
@@ -22,6 +31,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_rate_windows: Dict[str, deque] = defaultdict(deque)
+
+
+def rate_limit(key: str, limit: int, seconds: int) -> None:
+    now = time.time()
+    window = _rate_windows[key]
+    while window and window[0] < now - seconds:
+        window.popleft()
+    if len(window) >= limit:
+        raise HTTPException(429, f"Too many requests. Please wait up to {seconds} seconds and try again.")
+    window.append(now)
+
+
+@app.middleware("http")
+async def persist_after_mutation(request: Request, call_next):
+    response = await call_next(request)
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        STORE.save()     # write-through snapshot of core entities
+        progress_mod.snapshot_all()
+    return response
+
 
 coordinator = CoordinationAgent()
 analyst = ProjectAnalysisAgent()
@@ -42,6 +73,7 @@ def health():
 def login(req: LoginRequest):
     user = STORE.user(req.username)
     if user is None or not verify_password(req.password, user):
+        rate_limit(f"login-fail:{req.username.lower()[:64]}", 10, 300)
         STORE.ledger.record(req.username[:64], "LOGIN_FAILED", "AUTH", {})
         raise HTTPException(401, "Invalid username or password")
     STORE.ledger.record(user.username, "LOGIN_SUCCESS", "AUTH", {"role": user.role})
@@ -75,6 +107,8 @@ def _summary() -> Dict:
         "decisions": [d.model_dump() for d in STORE.decisions[:20]],
         "recent_audits": STORE.ledger.latest(25),
         "ledger_status": STORE.ledger.verify(),
+        "change_requests": services.list_change_requests(),
+        "ai": llm.status(),
     }
 
 
@@ -111,6 +145,8 @@ def my_portal(user: Dict = Depends(current_user)):
     gaps = workforce.skill_gaps()["gaps"]
     data["growth"] = [{"skill": g["skill"], "recommendation": r["recommendation"]} for g in gaps
                       for r in g["training_recommendations"] if r["employee_id"] == user["emp"]]
+    data["projects"] = [progress_mod.project_progress(p.id) for p in progress_mod.visible_projects(user)]
+    data["change_requests"] = services.list_change_requests(user["emp"])
     return data
 
 
@@ -154,7 +190,7 @@ def create_project(req: ProjectCreateRequest, user: Dict = Depends(require_admin
     with STORE.lock:
         pid = STORE.next_id("PRJ")
         project = Project(id=pid, name=req.name, business_objective=req.objective, priority=req.priority,
-                          deadline_days=req.deadline_days, created_by=user["sub"])
+                          deadline_days=req.deadline_days, created_by=user["sub"], start_date=date.today().isoformat())
         key_to_id = {d["key"]: STORE.next_id("TSK") for d in drafts}
         new_tasks = [Task(id=key_to_id[d["key"]], project_id=pid, title=d["title"], description=d["description"],
                           required_skills=d["required_skills"], estimated_hours=d["estimated_hours"], priority=d["priority"],
@@ -172,7 +208,8 @@ def create_project(req: ProjectCreateRequest, user: Dict = Depends(require_admin
 
 
 @app.get("/api/v1/projects/{project_id}/dag")
-def project_dag(project_id: str, _: Dict = Depends(current_user)):
+def project_dag(project_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
     tasks = [t for t in STORE.tasks if t.project_id == project_id]
     if not tasks:
         raise HTTPException(404, "Project not found")
@@ -180,8 +217,8 @@ def project_dag(project_id: str, _: Dict = Depends(current_user)):
 
 
 @app.post("/api/v1/tasks/allocate-all")
-def allocate_all(user: Dict = Depends(require_admin)):
-    return allocator.allocate_all(user["sub"])
+def allocate_all(project_id: Optional[str] = None, user: Dict = Depends(require_admin)):
+    return services.run_allocation(user["sub"], project_id)
 
 
 @app.get("/api/v1/tasks/{task_id}/candidates")
@@ -215,7 +252,10 @@ def progress(_: Dict = Depends(require_admin)):
 # ------------------------------------------------------------------ disruption, risk, approvals
 @app.post("/api/v1/disruptions/simulate")
 def simulate_disruption(req: DisruptionRequest, user: Dict = Depends(require_admin)):
-    return risk.disruption(req.employee_id, req.new_status, req.leave_days, req.reason, user["sub"])
+    result = risk.disruption(req.employee_id, req.new_status, req.leave_days, req.reason, user["sub"])
+    if result["proposals_created"]:
+        db.notify("approval", f"{result['disrupted_employee']}: {req.new_status}", f"{len(result['proposals_created'])} reallocation proposal(s) need approval.", audience_role="ADMIN", link_view="manager")
+    return result
 
 
 @app.get("/api/v1/risks")
@@ -230,7 +270,9 @@ def skill_gaps(_: Dict = Depends(require_admin)):
 
 @app.post("/api/v1/approvals/{approval_id}/approve")
 def approve(approval_id: str, req: DecisionRequest = DecisionRequest(), user: Dict = Depends(require_admin)):
-    return coordinator.decide(approval_id, True, req.comments, user["sub"])
+    result = coordinator.decide(approval_id, True, req.comments, user["sub"])
+    services.decide_approval_notifications(result)
+    return result
 
 
 @app.post("/api/v1/approvals/{approval_id}/reject")
@@ -245,7 +287,9 @@ def file_dispute(req: DisputeRequest, user: Dict = Depends(current_user)):
     if not emp_id:
         raise HTTPException(400, "employee_id required")
     assert_self_or_admin(user, emp_id)
-    return evaluator.file_dispute(emp_id, req.reason, user["sub"])
+    result = evaluator.file_dispute(emp_id, req.reason, user["sub"])
+    db.notify("dispute", "Evidence dispute filed", f"{STORE.employee(emp_id).name}: {req.reason[:140]}", audience_role="ADMIN", link_view="employee", link_id=emp_id)
+    return result
 
 
 @app.post("/api/v1/employees/{employee_id}/dispute/resolve")
@@ -283,3 +327,335 @@ def ingest_event(req: IntegrationEventRequest, user: Dict = Depends(require_admi
 @app.post("/api/v1/chat/coordinator")
 def coordinator_chat(req: ChatQueryRequest, user: Dict = Depends(current_user)):
     return coordinator.chat(req.query, user)
+
+
+# ------------------------------------------------------------------ system & notifications
+@app.get("/api/v1/system/status")
+def system_status(_: Dict = Depends(require_admin)):
+    usage = db.one("SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(ok = 0), 0) AS failures FROM ai_usage")
+    return {"ai": llm.status(), "ai_usage": usage, "retrieval": "SQLite FTS5 (BM25), scoped per project; no embeddings",
+            "database": "SQLite", "ledger": STORE.ledger.verify(), "github_token": False,
+            "oauth": {"linkedin": False, "instagram": False, "x": False}, "upload_limit_mb": documents.MAX_BYTES // (1024 * 1024)}
+
+
+@app.get("/api/v1/notifications")
+def notifications(user: Dict = Depends(current_user)):
+    return db.rows("SELECT * FROM notifications WHERE audience_user = ? OR audience_role = ? ORDER BY created_at DESC, rowid DESC LIMIT 40", (user["sub"], user["role"]))
+
+
+@app.post("/api/v1/notifications/read-all")
+def notifications_read_all(user: Dict = Depends(current_user)):
+    with db.tx() as c:
+        c.execute("UPDATE notifications SET is_read = 1 WHERE audience_user = ? OR audience_role = ?", (user["sub"], user["role"]))
+    return {"status": "OK"}
+
+
+@app.post("/api/v1/notifications/{notification_id}/read")
+def notification_read(notification_id: str, user: Dict = Depends(current_user)):
+    with db.tx() as c:
+        c.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND (audience_user = ? OR audience_role = ?)", (notification_id, user["sub"], user["role"]))
+    return {"status": "OK"}
+
+
+# ------------------------------------------------------------------ projects workspace
+@app.get("/api/v1/projects")
+def list_projects(user: Dict = Depends(current_user)):
+    return [progress_mod.project_progress(p.id) | {"objective": p.business_objective} for p in progress_mod.visible_projects(user)]
+
+
+@app.post("/api/v1/projects/draft")
+def create_draft_project(req: ProjectDraftRequest, user: Dict = Depends(require_admin)):
+    return services.create_draft_project(req.name, req.objective, req.priority, req.deadline_days, user["sub"])
+
+
+@app.get("/api/v1/projects/{project_id}")
+def project_detail(project_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    project = STORE.project(project_id)
+    tasks = [t for t in STORE.tasks if t.project_id == project_id]
+    return {"project": project.model_dump(), "progress": progress_mod.project_progress(project_id), "tasks": [t.model_dump() for t in tasks],
+            "critical_path": engine.critical_path(tasks) if tasks else {"path": [], "total_hours": 0}}
+
+
+@app.patch("/api/v1/projects/{project_id}")
+def update_project(project_id: str, req: ProjectUpdateRequest, user: Dict = Depends(require_admin)):
+    return services.update_project(project_id, req.model_dump(exclude_none=True), user["sub"])
+
+
+@app.post("/api/v1/projects/{project_id}/progress-report")
+def report_progress(project_id: str, req: ProgressReportRequest, user: Dict = Depends(require_admin)):
+    return progress_mod.report_progress(project_id, req.reported_pct, req.note, user["sub"])
+
+
+@app.get("/api/v1/projects/{project_id}/evaluation")
+def evaluate_project(project_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    return progress_mod.evaluate_project(project_id)
+
+
+@app.get("/api/v1/projects/{project_id}/export.csv")
+def export_project(project_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    return _csv(f"{project_id}-tasks.csv", ["id", "title", "phase", "milestone", "priority", "status", "owner", "estimated_hours", "deadline_day", "reported_pct", "dependencies"],
+                [[t.id, t.title, t.phase, t.milestone, t.priority, t.status, (STORE.find_employee(t.assigned_to).name if t.assigned_to else ""), t.estimated_hours,
+                  t.deadline_days, t.progress_pct, " ".join(t.dependencies)] for t in STORE.tasks if t.project_id == project_id])
+
+
+def _csv(filename: str, header: List[str], rows: List[List]) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    # Prefix values a spreadsheet would run as formulas.
+    writer.writerows([[f"'{v}" if isinstance(v, str) and v[:1] in "=+-@" else v for v in row] for row in rows])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/v1/audit/export.csv")
+def export_audit(_: Dict = Depends(require_admin)):
+    return _csv("audit-ledger.csv", ["id", "timestamp", "actor", "action", "entity", "sha256"],
+                [[e.id, e.timestamp, e.actor, e.action, e.entity_id, e.sha256_proof] for e in STORE.ledger.all()])
+
+
+@app.get("/api/v1/employees/export.csv")
+def export_employees(_: Dict = Depends(require_admin)):
+    rows = [engine.compute_6_scores(e) for e in STORE.employees]
+    return _csv("employees.csv", ["id", "name", "department", "designation", "status", "skill_score", "performance_score", "availability_score", "workload_score", "collaboration_score", "level"],
+                [[r["employee_id"], r["name"], r["department"], r["designation"], r["status"], r["skill_score"], r["performance_score"], r["availability_score"], r["workload_score"], r["collaboration_score"], r["level"]] for r in rows])
+
+
+# ------------------------------------------------------------------ documents
+@app.get("/api/v1/projects/{project_id}/documents")
+def list_documents(project_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    return documents.list_documents(project_id)
+
+
+@app.post("/api/v1/projects/{project_id}/documents")
+async def upload_documents(project_id: str, background: BackgroundTasks, files: List[UploadFile] = File(...), user: Dict = Depends(require_admin)):
+    STORE.project(project_id)
+    rate_limit(f"upload:{user['sub']}", 40, 60)
+    results = []
+    for f in files[:20]:
+        data = await f.read(documents.MAX_BYTES + 1)
+        try:
+            doc = documents.store_upload(project_id, f.filename or "", data, user["sub"])
+        except ValueError as exc:
+            results.append({"filename": f.filename, "status": "rejected", "error": str(exc)})
+            continue
+        if doc.get("duplicate"):
+            results.append({"filename": f.filename, "status": "duplicate", "document_id": doc["id"], "error": f"Identical to {doc['filename']} v{doc['version']}; not added again."})
+            continue
+        background.add_task(documents.process, doc["id"])
+        results.append({"filename": doc["filename"], "status": "uploaded", "document_id": doc["id"], "version": doc["version"]})
+    STORE.ledger.record(user["sub"], "DOCUMENTS_UPLOADED", project_id, {"files": [{"name": r["filename"], "status": r["status"]} for r in results]})
+    return {"results": results}
+
+
+@app.get("/api/v1/projects/{project_id}/documents/{document_id}/preview")
+def document_preview(project_id: str, document_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    return documents.preview(project_id, document_id)
+
+
+@app.delete("/api/v1/projects/{project_id}/documents/{document_id}")
+def delete_document(project_id: str, document_id: str, user: Dict = Depends(require_admin)):
+    doc = documents.get_document(project_id, document_id)
+    documents.delete_document(project_id, document_id)
+    STORE.ledger.record(user["sub"], "DOCUMENT_DELETED", project_id, {"filename": doc["filename"], "version": doc["version"]})
+    return {"status": "DELETED"}
+
+
+@app.post("/api/v1/projects/{project_id}/documents/{document_id}/reindex")
+def reindex_document(project_id: str, document_id: str, background: BackgroundTasks, _: Dict = Depends(require_admin)):
+    documents.get_document(project_id, document_id)
+    background.add_task(documents.process, document_id)
+    return {"status": "QUEUED"}
+
+
+@app.get("/api/v1/projects/{project_id}/documents-search")
+def search_documents(project_id: str, q: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_project_access(user, project_id)
+    return documents.search(project_id, q[:400])
+
+
+# ------------------------------------------------------------------ specification & plan
+@app.post("/api/v1/projects/{project_id}/analyze")
+def analyze_documents(project_id: str, user: Dict = Depends(require_admin)):
+    return workflow.analyze(project_id, user["sub"])
+
+
+@app.get("/api/v1/projects/{project_id}/spec")
+def get_spec(project_id: str, _: Dict = Depends(require_admin)):
+    return workflow.get_spec(project_id)
+
+
+@app.patch("/api/v1/projects/{project_id}/spec")
+def update_spec(project_id: str, req: SpecUpdateRequest, _: Dict = Depends(require_admin)):
+    return workflow.update_spec(project_id, req.summary, req.notes)
+
+
+@app.post("/api/v1/projects/{project_id}/spec/approve")
+def approve_spec(project_id: str, user: Dict = Depends(require_admin)):
+    return workflow.approve_spec(project_id, user["sub"])
+
+
+@app.post("/api/v1/projects/{project_id}/clarifications/{clarification_id}")
+def answer_clarification(project_id: str, clarification_id: str, req: ClarificationAnswer, user: Dict = Depends(require_admin)):
+    return workflow.answer_clarification(project_id, clarification_id, req.answer, user["sub"])
+
+
+@app.get("/api/v1/projects/{project_id}/plan")
+def get_plan(project_id: str, _: Dict = Depends(require_admin)):
+    return workflow.get_plan(project_id) or {"plan": None}
+
+
+@app.post("/api/v1/projects/{project_id}/plan/generate")
+def generate_plan(project_id: str, force: bool = False, user: Dict = Depends(require_admin)):
+    return workflow.generate_plan(project_id, user["sub"], force)
+
+
+@app.put("/api/v1/projects/{project_id}/plan/{plan_id}")
+def update_plan(project_id: str, plan_id: str, body: Dict, _: Dict = Depends(require_admin)):
+    return workflow.update_plan(project_id, plan_id, body)
+
+
+@app.post("/api/v1/projects/{project_id}/plan/{plan_id}/approve")
+def approve_plan(project_id: str, plan_id: str, user: Dict = Depends(require_admin)):
+    return workflow.approve_plan(project_id, plan_id, user["sub"])
+
+
+# ------------------------------------------------------------------ tasks
+@app.post("/api/v1/projects/{project_id}/tasks")
+def create_task(project_id: str, req: TaskCreateRequest, user: Dict = Depends(require_admin)):
+    return services.create_task(project_id, req.model_dump(), user["sub"])
+
+
+@app.patch("/api/v1/tasks/{task_id}")
+def update_task(task_id: str, req: TaskUpdateRequest, user: Dict = Depends(require_admin)):
+    return services.update_task(task_id, req.model_dump(exclude_none=True), user["sub"])
+
+
+@app.delete("/api/v1/tasks/{task_id}")
+def delete_task(task_id: str, user: Dict = Depends(require_admin)):
+    return services.delete_task(task_id, user["sub"])
+
+
+@app.post("/api/v1/tasks/{task_id}/assign")
+def assign_task(task_id: str, req: TaskAssignRequest, user: Dict = Depends(require_admin)):
+    return services.assign_task(task_id, req.employee_id, req.reason, user["sub"])
+
+
+@app.post("/api/v1/tasks/{task_id}/rework")
+def request_rework(task_id: str, req: ReworkRequest, user: Dict = Depends(require_admin)):
+    return services.request_rework(task_id, req.reason, user["sub"])
+
+
+# ------------------------------------------------------------------ employees
+@app.post("/api/v1/employees")
+def create_employee(req: EmployeeCreateRequest, user: Dict = Depends(require_admin)):
+    return services.create_employee(req.model_dump(), user["sub"])
+
+
+@app.patch("/api/v1/employees/{employee_id}")
+def update_employee(employee_id: str, req: EmployeeUpdateRequest, user: Dict = Depends(require_admin)):
+    return services.update_employee(employee_id, req.model_dump(exclude_none=True), user["sub"])
+
+
+@app.delete("/api/v1/employees/{employee_id}")
+def deactivate_employee(employee_id: str, user: Dict = Depends(require_admin)):
+    return services.deactivate_employee(employee_id, user["sub"])
+
+
+@app.get("/api/v1/employees/{employee_id}/intelligence")
+def employee_intelligence(employee_id: str, user: Dict = Depends(current_user)):
+    assert_self_or_admin(user, employee_id)
+    return {"employee": engine.compute_6_scores(STORE.employee(employee_id)), "profile": workforce_mod.get_profile(employee_id), "skills": workforce_mod.get_skills(employee_id),
+            "resume": workforce_mod.get_resume(employee_id), "links": workforce_mod.list_links(employee_id), "challenges": workforce_mod.list_challenges(employee_id),
+            "completed": [t.model_dump() for t in STORE.tasks if t.assigned_to == employee_id and t.status == "COMPLETED_AND_AUDITED"]}
+
+
+@app.put("/api/v1/employees/{employee_id}/profile")
+def save_profile(employee_id: str, req: ProfileUpdateRequest, user: Dict = Depends(current_user)):
+    assert_self_or_admin(user, employee_id)
+    return workforce_mod.save_profile(employee_id, req.model_dump(), user["sub"])
+
+
+@app.post("/api/v1/employees/{employee_id}/skills/evaluate")
+def evaluate_skills(employee_id: str, user: Dict = Depends(require_admin)):
+    return workforce_mod.evaluate_skills(employee_id, user["sub"])
+
+
+@app.post("/api/v1/employees/{employee_id}/skills/challenge")
+def challenge_skill(employee_id: str, req: SkillChallengeRequest, user: Dict = Depends(current_user)):
+    assert_self_or_admin(user, employee_id)
+    return workforce_mod.challenge_skill(employee_id, req.skill, req.reason, user["sub"])
+
+
+@app.post("/api/v1/skill-challenges/{challenge_id}/resolve")
+def resolve_challenge(challenge_id: str, req: ChallengeResolveRequest, user: Dict = Depends(require_admin)):
+    return workforce_mod.resolve_challenge(challenge_id, req.resolution, req.note, user["sub"])
+
+
+@app.post("/api/v1/employees/{employee_id}/resume")
+async def upload_resume(employee_id: str, file: UploadFile = File(...), target_text: Optional[str] = Form(None), task_id: Optional[str] = Form(None), user: Dict = Depends(current_user)):
+    assert_self_or_admin(user, employee_id)
+    rate_limit(f"resume:{user['sub']}", 10, 60)
+    label = "Job description provided" if target_text else None
+    if task_id:
+        task = STORE.task(task_id)
+        target_text, label = " ".join(task.required_skills), f"{task.id}: {task.title}"
+    return workforce_mod.upload_resume(employee_id, file.filename or "", await file.read(documents.MAX_BYTES + 1), target_text, label, user["sub"])
+
+
+@app.post("/api/v1/employees/{employee_id}/links")
+def save_link(employee_id: str, req: ProfessionalLinkRequest, user: Dict = Depends(current_user)):
+    if user.get("emp") != employee_id:     # consent: only the employee can link their own accounts
+        raise HTTPException(403, "Only the employee can connect their own accounts")
+    return workforce_mod.save_link(employee_id, req.provider, req.value, user["sub"])
+
+
+@app.delete("/api/v1/employees/{employee_id}/links/{provider}")
+def remove_link(employee_id: str, provider: str, user: Dict = Depends(current_user)):
+    if user.get("emp") != employee_id:
+        raise HTTPException(403, "Only the employee can disconnect their own accounts")
+    return workforce_mod.remove_link(employee_id, provider, user["sub"])
+
+
+# ------------------------------------------------------------------ change requests
+@app.post("/api/v1/change-requests")
+def create_change_request(req: ChangeRequestCreate, user: Dict = Depends(current_user)):
+    if not user.get("emp"):
+        raise HTTPException(400, "This account has no employee profile")
+    return services.create_change_request(user["emp"], req.kind, req.task_id, req.details, user["sub"])
+
+
+@app.post("/api/v1/change-requests/{request_id}/resolve")
+def resolve_change_request(request_id: str, req: ChangeRequestResolve, user: Dict = Depends(require_admin)):
+    return services.resolve_change_request(request_id, req.approve, req.note, req.new_deadline_days, req.leave_days, user["sub"])
+
+
+# ------------------------------------------------------------------ assistant
+@app.post("/api/v1/assistant/chat")
+def assistant_chat(req: AssistantChatRequest, user: Dict = Depends(current_user)):
+    rate_limit(f"chat:{user['sub']}", 30, 60)
+    return assistant.chat(user, req.message, req.conversation_id, req.project_id)
+
+
+@app.get("/api/v1/assistant/conversations")
+def assistant_conversations(user: Dict = Depends(current_user)):
+    return assistant.list_conversations(user)
+
+
+@app.get("/api/v1/assistant/conversations/{conversation_id}")
+def assistant_conversation(conversation_id: str, user: Dict = Depends(current_user)):
+    return assistant.get_messages(conversation_id, user)
+
+
+@app.post("/api/v1/assistant/actions/{action_id}/approve")
+def assistant_action_approve(action_id: str, user: Dict = Depends(current_user)):
+    return assistant.decide_action(action_id, True, user)
+
+
+@app.post("/api/v1/assistant/actions/{action_id}/reject")
+def assistant_action_reject(action_id: str, user: Dict = Depends(current_user)):
+    return assistant.decide_action(action_id, False, user)

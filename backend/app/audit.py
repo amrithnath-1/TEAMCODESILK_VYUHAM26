@@ -47,6 +47,13 @@ class AuditLedger:
             self._entries.append(entry)
             return entry
 
+    def dump(self) -> List[Dict]:
+        return [e.model_dump() for e in self._entries]
+
+    def load(self, entries: List[Dict]) -> None:
+        with self._lock:
+            self._entries = [AuditLog(**e) for e in entries]
+
     def latest(self, limit: int = 50) -> List[Dict]:
         return [e.model_dump() for e in reversed(self._entries[-limit:])]
 

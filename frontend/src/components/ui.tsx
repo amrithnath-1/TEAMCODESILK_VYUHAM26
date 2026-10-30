@@ -5,7 +5,7 @@ export function Card({ title, action, children, className = "" }: { title?: Reac
   return (
     <section className={`min-w-0 rounded-2xl bg-white p-5 shadow-card ${className}`}>
       {(title || action) && (
-        <header className="mb-4 flex items-center justify-between gap-3">
+        <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
           {title && <h2 className="text-[15px] font-semibold text-slate-800">{title}</h2>}
           {action}
         </header>
@@ -47,6 +47,24 @@ const STATUS_STYLES: Record<string, string> = {
   AT_RISK_DISRUPTED: "bg-rose-400 text-white",
   REJECTED: "bg-rose-400 text-white",
   Overloaded: "bg-rose-400 text-white",
+  Inactive: "bg-slate-200 text-slate-600",
+  indexed: "bg-emerald-400/90 text-white",
+  uploaded: "bg-slate-200 text-slate-600",
+  extracting: "bg-sky-400 text-white",
+  failed: "bg-rose-400 text-white",
+  superseded: "bg-slate-100 text-slate-500",
+  Draft: "bg-slate-200 text-slate-600",
+  Active: "bg-sky-400 text-white",
+  Completed: "bg-emerald-500 text-white",
+  Archived: "bg-slate-200 text-slate-500",
+  connected: "bg-emerald-400/90 text-white",
+  link_submitted: "bg-amber-100 text-amber-800",
+  not_connected: "bg-slate-100 text-slate-500",
+  error: "bg-rose-400 text-white",
+  open: "bg-orange-400 text-white",
+  approved: "bg-emerald-400/90 text-white",
+  declined: "bg-slate-200 text-slate-600",
+  draft: "bg-slate-200 text-slate-600",
   "On Leave": "bg-slate-400 text-white",
   BLOCKED_BY_DEPENDENCY: "bg-slate-300 text-slate-700",
   READY_FOR_ALLOCATION: "bg-slate-100 text-slate-600",

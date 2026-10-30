@@ -11,11 +11,29 @@ from typing import Dict, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from . import db
 from .models import User
 
 TOKEN_TTL_SECONDS = 8 * 3600
-# A per-process secret unless one is configured; restarting the API logs everyone out.
-_SECRET = os.environ.get("AF07_SECRET_KEY", "").encode() or secrets.token_bytes(32)
+_token_secret = None
+
+
+def _secret() -> bytes:
+    """AF07_SECRET_KEY if set, otherwise a random key generated once and kept in the database."""
+    global _token_secret
+    if _token_secret is None:
+        env = os.environ.get("AF07_SECRET_KEY", "")
+        if env:
+            _token_secret = env.encode()
+        else:
+            stored = db.get_meta("token_secret")
+            if not stored:
+                stored = secrets.token_hex(32)
+                db.set_meta("token_secret", stored)
+            _token_secret = stored.encode()
+    return _token_secret
+
+
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -41,7 +59,7 @@ def _unb64(data: str) -> bytes:
 def issue_token(user: User) -> str:
     body = {"sub": user.username, "role": user.role, "emp": user.employee_id, "exp": int(time.time()) + TOKEN_TTL_SECONDS}
     payload = _b64(json.dumps(body, separators=(",", ":")).encode())
-    sig = _b64(hmac.new(_SECRET, payload.encode(), hashlib.sha256).digest())
+    sig = _b64(hmac.new(_secret(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
 
 
@@ -50,7 +68,7 @@ def decode_token(token: str) -> Dict:
         payload, sig = token.split(".")
     except ValueError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Malformed token")
-    expected = _b64(hmac.new(_SECRET, payload.encode(), hashlib.sha256).digest())
+    expected = _b64(hmac.new(_secret(), payload.encode(), hashlib.sha256).digest())
     if not hmac.compare_digest(sig, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token signature")
     claims = json.loads(_unb64(payload))
