@@ -63,7 +63,7 @@ def _unb64(data: str) -> bytes:
 
 
 def issue_token(user: User) -> str:
-    body = {"sub": user.username, "role": user.role, "emp": user.employee_id, "exp": int(time.time()) + TOKEN_TTL_SECONDS}
+    body = {"sub": user.username, "role": user.role, "emp": user.employee_id, "org": db.org(), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
     payload = _b64(json.dumps(body, separators=(",", ":")).encode())
     sig = _b64(hmac.new(_secret(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
@@ -83,6 +83,41 @@ def decode_token(token: str) -> Dict:
     return claims
 
 
+def coarse_role(role: str) -> str:
+    return "ADMIN" if role in ("OWNER", "ADMIN") else "STAFF"
+
+
+def organization_from(authorization: Optional[str]) -> str:
+    """The organization in a valid token, or NO_ORG. Scopes the whole request before any route runs."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return db.NO_ORG
+    try:
+        return decode_token(authorization.split(" ", 1)[1].strip()).get("org", db.DEFAULT_ORG)
+    except HTTPException:
+        return db.NO_ORG
+
+
+REAUTH_TTL_SECONDS = 300
+
+
+def issue_reauth(username: str, purpose: str) -> str:
+    """Short-lived proof that the signed-in user just re-entered their password, for one kind of action."""
+    payload = _b64(json.dumps({"sub": username, "purpose": purpose, "exp": int(time.time()) + REAUTH_TTL_SECONDS}, separators=(",", ":")).encode())
+    return f"{payload}.{_b64(hmac.new(_secret(), b'reauth:' + payload.encode(), hashlib.sha256).digest())}"
+
+
+def check_reauth(token: str, username: str, purpose: str) -> None:
+    denied = HTTPException(403, "Please confirm your password again to make this change")
+    try:
+        payload, sig = token.split(".")
+        expected = _b64(hmac.new(_secret(), b"reauth:" + payload.encode(), hashlib.sha256).digest())
+        claims = json.loads(_unb64(payload)) if hmac.compare_digest(sig.encode(), expected.encode()) else None
+    except (ValueError, TypeError):
+        raise denied
+    if not claims or claims["sub"] != username or claims["purpose"] != purpose or claims["exp"] < time.time():
+        raise denied
+
+
 def current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> Dict:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
@@ -91,7 +126,8 @@ def current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer
     account = STORE.user(claims["sub"])
     if account is None:         # deactivated or removed since the token was issued
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This account is no longer active")
-    return {**claims, "role": account.role, "emp": account.employee_id}
+    # "role" is the coarse admin-or-not check used across the app; "org_role" is the exact role.
+    return {**claims, "role": coarse_role(account.role), "org_role": account.role, "emp": account.employee_id}
 
 
 def require_admin(user: Dict = Depends(current_user)) -> Dict:

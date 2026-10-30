@@ -1,35 +1,105 @@
-"""SQLite persistence: versioned migrations, per-thread connections, small helpers."""
+"""Persistence: SQLite by default, Supabase Postgres when SUPABASE_DB_URL is set. Versioned migrations and small helpers."""
 import json
 import os
 import shutil
 import sqlite3
+import re
 import threading
+import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlsplit
 
 from .audit import utcnow
+from .schema import COMMON, ORG_TABLES
 
 DATA_DIR = Path(os.environ.get("AF07_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "vyuham.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 BACKUP_DIR = DATA_DIR / "backups"
-ORG_ID = "ORG-1"
+DEFAULT_ORG = "ORG-1"
+NO_ORG = ""     # a request with no valid token: anything that needs company data fails rather than guessing one
+_org: ContextVar[str] = ContextVar("vyuham_org", default=DEFAULT_ORG)
 ENVIRONMENTS = ("development", "staging", "production")
+DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
+MIGRATION_URL = os.environ.get("SUPABASE_MIGRATION_DB_URL", "").strip()     # owner login, used only to change the schema
+SCHEMA = os.environ.get("VYUHAM_SCHEMA", "vyuham").strip()
 
 
 def environment() -> str:
+    if DB_URL and not os.environ.get("VYUHAM_ENV", "").strip():     # a remote database must never be assumed to be development
+        raise RuntimeError("VYUHAM_ENV must be set when SUPABASE_DB_URL is set")
     env = os.environ.get("VYUHAM_ENV", "development").strip().lower()
     if env not in ENVIRONMENTS:
         raise RuntimeError(f"VYUHAM_ENV must be one of {', '.join(ENVIRONMENTS)}")
     return env
 
 
+def project_ref() -> str:
+    """The Supabase project in the connection URL's user name (postgres.<ref>). Not a secret."""
+    return (urlsplit(DB_URL).username or "").partition(".")[2]
+
+
 def require_development(action: str) -> None:
     """Blocks anything that deletes data or seeds demo accounts outside development."""
     if environment() != "development":
         raise PermissionError(f"{action} is only allowed in development (VYUHAM_ENV is {environment()})")
+    if DB_URL and project_ref() != os.environ.get("VYUHAM_DEV_PROJECT_REF", "").strip():
+        raise PermissionError(f"{action} is refused: this Supabase project is not the one named in VYUHAM_DEV_PROJECT_REF")
+
+
+def org() -> str:
+    return _org.get()
+
+
+def set_org(value: str):
+    return _org.set(value)
+
+
+def reset_org(handle) -> None:
+    _org.reset(handle)
+
+
+@contextmanager
+def as_org(value: str):
+    handle = _org.set(value)
+    try:
+        yield
+    finally:
+        _org.reset(handle)
+
+
+_INSERT = re.compile(r"^\s*INSERT INTO (\w+) \(([^)]*)\) VALUES \(", re.IGNORECASE)
+
+
+def _scoped(sql: str, params: Iterable[Any]) -> tuple:
+    """Stamps inserts into company tables with the current organization, so no caller can forget it."""
+    params = tuple(params)
+    match = _INSERT.match(sql)
+    if match and match.group(1) in ORG_TABLES and "org_id" not in match.group(2):
+        sql = sql[:match.start(2)] + "org_id, " + sql[match.start(2):match.end()] + "?, " + sql[match.end():]
+        params = (org(), *params)
+    return sql, params
+
+
+class _Scoped:
+    """Wraps a connection so company inserts are stamped whichever database is in use."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: Iterable[Any] = ()):
+        return self._conn.execute(*_scoped(sql, params))
+
+    def executemany(self, sql: str, seq) -> None:
+        self._conn.executemany(sql, seq)
+
+
+def database_label() -> str:
+    return "Supabase Postgres" if DB_URL else "SQLite"
 
 
 MIGRATIONS: List[str] = [
@@ -110,10 +180,13 @@ MIGRATIONS: List[str] = [
     """,
 ]
 
+COMPANY_ONLY_TABLES = ["onboarding_messages", "skill_requests", "skill_manual_scores", "project_transitions", "room_members", "room_attachments", "room_messages",
+                       "project_rooms", "project_decisions", "action_items", "meeting_minutes", "project_budgets", "cost_rates", "cost_entries", "idempotency_keys"]
 BUSINESS_TABLES = ["chunks_fts", "chunks", "documents", "project_specs", "clarifications", "plans", "profiles", "resumes",
                    "skill_assessments", "skill_challenges", "professional_links", "progress_updates", "progress_snapshots",
                    "messages", "conversations", "pending_actions", "change_requests", "notifications", "ai_usage"]
 
+MIGRATIONS = MIGRATIONS + COMMON
 _local = threading.local()
 _init_lock = threading.Lock()
 _initialized = False
@@ -145,6 +218,12 @@ def init() -> None:
         environment()
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        if DB_URL:
+            from . import pg
+            pg.open_pool(DB_URL, SCHEMA)
+            pg.migrate(backup, MIGRATION_URL)
+            _initialized = True
+            return
         conn = _connect()
         try:
             conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
@@ -168,43 +247,71 @@ def backup(reason: str) -> Path:
     stamp = utcnow().replace(":", "").replace("-", "")
     dest = BACKUP_DIR / f"{stamp}-{uuid.uuid4().hex[:6]}-{reason}"
     dest.mkdir(parents=True)
-    source, target = sqlite3.connect(DB_PATH), sqlite3.connect(dest / "vyuham.db")
-    try:
-        source.backup(target)
-    finally:
-        target.close()
-        source.close()
+    if DB_URL:
+        from . import pg
+        pg.dump_tables(dest)
+    else:
+        source, target = sqlite3.connect(DB_PATH), sqlite3.connect(dest / "vyuham.db")
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
     if UPLOAD_DIR.exists():
         shutil.copytree(UPLOAD_DIR, dest / "uploads")
     return dest
 
 
 def has_business_data() -> bool:
-    return any(one(f"SELECT 1 AS found FROM {table} LIMIT 1") for table in BUSINESS_TABLES)
+    return any(one(f"SELECT 1 AS found FROM {table} WHERE org_id = ? LIMIT 1", (org(),)) for table in BUSINESS_TABLES if table != "chunks_fts")
 
 
 @contextmanager
 def tx():
+    if DB_URL:
+        init()
+        from . import pg
+        with pg.transaction() as session:
+            yield _Scoped(session)
+        return
     conn = get_conn()
     try:
-        yield conn
+        yield _Scoped(conn)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
 
 
+@contextmanager
+def _reader():
+    if DB_URL:
+        init()
+        from . import pg
+        with pg.session() as session:
+            yield session
+        return
+    yield get_conn()
+
+
 def rows(sql: str, params: Iterable[Any] = ()) -> List[Dict]:
-    return [dict(r) for r in get_conn().execute(sql, tuple(params)).fetchall()]
+    with _reader() as c:
+        return [dict(r) for r in c.execute(sql, tuple(params)).fetchall()]
 
 
 def one(sql: str, params: Iterable[Any] = ()) -> Optional[Dict]:
-    r = get_conn().execute(sql, tuple(params)).fetchone()
-    return dict(r) if r else None
+    with _reader() as c:
+        r = c.execute(sql, tuple(params)).fetchone()
+        return dict(r) if r else None
 
 
 def new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
+
+
+def ordered_id(prefix: str) -> str:
+    """Sorts by creation time, for records shown in sequence."""
+    return f"{prefix}-{time.time_ns():020d}-{uuid.uuid4().hex[:6]}"
 
 
 def get_meta(key: str) -> Optional[str]:
@@ -218,11 +325,26 @@ def set_meta(key: str, value: str) -> None:
 
 
 def clear_business_data() -> None:
+    """Removes this organization's records and files. Other organizations are untouched."""
+    current = org()
+    stored = [r["stored_path"] for t in ("documents", "resumes", "room_attachments") for r in rows(f"SELECT stored_path FROM {t} WHERE org_id = ?", (current,))]
     with tx() as c:
-        for table in BUSINESS_TABLES:
-            c.execute(f"DELETE FROM {table}")
-    for path in UPLOAD_DIR.glob("*"):
-        path.unlink(missing_ok=True)
+        c.execute("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE org_id = ?)", (current,))
+        for table in COMPANY_ONLY_TABLES + BUSINESS_TABLES:
+            if table != "chunks_fts":
+                c.execute(f"DELETE FROM {table} WHERE org_id = ?", (current,))
+    for path in stored:
+        Path(path).unlink(missing_ok=True)
+
+
+def add_account(username: str, organization: Optional[str] = None) -> None:
+    with tx() as c:
+        c.execute("INSERT INTO accounts (username, org_id, created_at) VALUES (?, ?, ?) ON CONFLICT(username) DO NOTHING", (username, organization or org(), utcnow()))
+
+
+def account_org(username: str) -> Optional[str]:
+    row = one("SELECT org_id FROM accounts WHERE username = ?", (username.lower().strip(),))
+    return row["org_id"] if row else None
 
 
 def notify(kind: str, title: str, body: str, audience_role: Optional[str] = None, audience_user: Optional[str] = None,

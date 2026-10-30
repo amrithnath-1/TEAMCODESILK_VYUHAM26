@@ -189,15 +189,80 @@ def evaluate_project(project_id: str) -> Dict:
 def assert_project_access(user: Dict, project_id: str) -> None:
     """Admins see all projects in the organization; staff only projects where they own a task."""
     project = STORE.project(project_id)
-    if user["role"] == "ADMIN":
+    if user["role"] == "ADMIN" or user["sub"] in project.manager_usernames:
         return
     if not any(t.project_id == project.id and t.assigned_to == user.get("emp") for t in STORE.tasks):
         raise HTTPException(403, "You are not assigned to this project")
+
+
+def assert_can_manage(user: Dict, project_id: str) -> None:
+    """Administrators, and managers named on this project. Being a manager somewhere else gives nothing here."""
+    project = STORE.project(project_id)
+    if user["role"] != "ADMIN" and not (user.get("org_role") == "MANAGER" and user["sub"] in project.manager_usernames):
+        raise HTTPException(403, "Only an administrator or this project's manager can do this")
 
 
 def visible_projects(user: Dict) -> List:
     live = [p for p in STORE.projects if p.status != "Archived"]
     if user["role"] == "ADMIN":
         return live
-    mine = {t.project_id for t in STORE.tasks if t.assigned_to == user.get("emp")}
-    return [p for p in live if p.id in mine]
+    mine = {t.project_id for t in STORE.tasks if t.assigned_to == user.get("emp")} if user.get("emp") else set()
+    return [p for p in live if p.id in mine or user["sub"] in p.manager_usernames]
+
+
+STAGES = {"draft": "Draft", "under_evaluation": "Under AI evaluation", "awaiting_clarification": "Awaiting clarification", "awaiting_approval": "Awaiting approval", "approved": "Approved",
+          "awaiting_allocation": "Awaiting team allocation", "in_progress": "In progress", "blocked": "Blocked", "completed": "Completed", "cancelled": "Cancelled"}
+
+
+def project_stage(project) -> str:
+    """Worked out from the records themselves, so it cannot disagree with them. A team being allocated never reads as work being done."""
+    if project.status == "Archived":
+        return "cancelled"
+    if project.status == "Completed":
+        return "completed"
+    tasks = [t for t in STORE.tasks if t.project_id == project.id]
+    if tasks:
+        if all(t.status == DONE for t in tasks):
+            return "completed"
+        if any(t.status in ACTIVE for t in tasks):
+            return "blocked" if any(t.blocked or t.status in BLOCKED for t in tasks) and not any(t.status in ACTIVE and not t.blocked for t in tasks) else "in_progress"
+        if any(t.blocked or t.status in BLOCKED - {"BLOCKED_BY_DEPENDENCY"} for t in tasks):
+            return "blocked"
+        if any(t.status == "PENDING_HITL_APPROVAL" for t in tasks):
+            return "awaiting_approval"
+        if any(not t.assigned_to and t.status != DONE for t in tasks):
+            return "awaiting_allocation"
+        return "approved"
+    if db.one("SELECT 1 AS found FROM clarifications WHERE project_id = ? AND status = 'open' LIMIT 1", (project.id,)):
+        return "awaiting_clarification"
+    spec = db.one("SELECT status FROM project_specs WHERE project_id = ?", (project.id,))
+    plan = db.one("SELECT status FROM plans WHERE project_id = ? ORDER BY version DESC LIMIT 1", (project.id,))
+    if plan or spec:
+        return "awaiting_approval"
+    if db.one("SELECT 1 AS found FROM documents WHERE project_id = ? AND is_current = 1 LIMIT 1", (project.id,)):
+        return "under_evaluation"
+    return "draft"
+
+
+def overview(user: Dict) -> Dict:
+    """Project count and real teams. A project without assigned people has an empty team, which is a normal state."""
+    names = {e.id: e for e in STORE.employees}
+    projects = []
+    for p in visible_projects(user):
+        owners = sorted({t.assigned_to for t in STORE.tasks if t.project_id == p.id and t.assigned_to and t.assigned_to in names})
+        stage = project_stage(p)
+        projects.append({"project_id": p.id, "name": p.name, "stage": stage, "stage_label": STAGES[stage], "priority": p.priority,
+                         "team": [{"employee_id": e, "name": names[e].name, "designation": names[e].designation} for e in owners]})
+    counts = {k: sum(1 for x in projects if x["stage"] == k) for k in STAGES}
+    return {"total": len(projects), "stages": [{"key": k, "label": v, "count": counts[k]} for k, v in STAGES.items() if counts[k]], "projects": projects}
+
+
+def record_transitions(actor: str) -> None:
+    """Called after mutating requests: keeps a history of each project's stage with who caused the change."""
+    for project in STORE.projects:
+        stage = project_stage(project)
+        last = db.one("SELECT to_stage FROM project_transitions WHERE project_id = ? AND org_id = ? ORDER BY id DESC LIMIT 1", (project.id, db.org()))
+        if not last or last["to_stage"] != stage:
+            with db.tx() as c:
+                c.execute("INSERT INTO project_transitions (id, org_id, project_id, from_stage, to_stage, actor, created_at) VALUES (?,?,?,?,?,?,?)",
+                          (db.ordered_id("TRN"), db.org(), project.id, last["to_stage"] if last else None, stage, actor, utcnow()))

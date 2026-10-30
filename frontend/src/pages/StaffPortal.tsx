@@ -1,11 +1,11 @@
 import { BadgeCheck, CalendarClock, MessageSquareWarning, Send, ShieldAlert, Sprout, Target } from "lucide-react";
 import { AssistantPanel } from "../components/AssistantPanel";
 import { ProjectProgressCard } from "../components/ProgressDonut";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { ScoreGrid } from "../components/Modals";
 import { Card, Empty, PillButton, PriorityBadge, Ring, StatusPill } from "../components/ui";
-import type { ChangeRequest, EmployeeScores, Nav, ProjectProgress, Task } from "../types";
+import type { ChangeRequest, EmployeeScores, Nav, ProjectProgress, Task, SkillRequest } from "../types";
 
 interface Portal {
   scores: EmployeeScores;
@@ -169,6 +169,7 @@ export function StaffPortal({ toast, projects, reload, onNav, refreshKey }: { to
             : <p className="text-[12px] text-slate-400">No open demand for your learning goals right now.</p>}
         </Card>
 
+        <SkillRequests toast={toast} refreshKey={refreshKey} />
         <Card title={<span className="flex items-center gap-2"><Send size={15} className="text-brand-500" />Request a change</span>}>
           <label className="block text-[12px] text-slate-600">Type<select value={req.kind} onChange={(e) => setReq({ ...req, kind: e.target.value })} className="field"><option value="reassignment">Reassignment</option><option value="deadline_change">Deadline change</option><option value="leave">Leave</option></select></label>
           {req.kind !== "leave" && <label className="mt-2 block text-[12px] text-slate-600">Task<select value={req.task_id} onChange={(e) => setReq({ ...req, task_id: e.target.value })} className="field"><option value="">Choose a task</option>{data.tasks.map((t) => <option key={t.id} value={t.id}>{t.id}</option>)}</select></label>}
@@ -191,4 +192,36 @@ export function StaffPortal({ toast, projects, reload, onNav, refreshKey }: { to
 
 function Stat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-xl border border-slate-100 p-3"><div className="text-xl font-bold text-slate-800">{value}</div><div className="text-[11px] text-slate-500">{label}</div></div>;
+}
+
+
+function SkillRequests({ toast, refreshKey }: { toast: (m: string, k?: "ok" | "err") => void; refreshKey: unknown }) {
+  const [rows, setRows] = useState<SkillRequest[]>([]);
+  const [form, setForm] = useState({ skill: "", kind: "add", score: "", explanation: "", evidence: "" });
+  const load = useCallback(() => { api<SkillRequest[]>("/skill-requests").then(setRows).catch(() => {}); }, []);
+  useEffect(load, [load, refreshKey]);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api("/skill-requests", { body: { skill: form.skill, kind: form.kind, requested_score: form.score === "" ? null : Number(form.score), explanation: form.explanation, evidence: form.evidence || null } });
+      setForm({ skill: "", kind: "add", score: "", explanation: "", evidence: "" });
+      toast("Request sent. Your skills change only if an administrator approves it.");
+      load();
+    } catch (error: any) { toast(error.message, "err"); }
+  };
+  return (
+    <Card title="Request a skill review">
+      <form onSubmit={submit} className="space-y-2">
+        <input aria-label="Skill" required value={form.skill} onChange={(e) => setForm({ ...form, skill: e.target.value })} placeholder="Skill" className="field !mt-0" />
+        <div className="grid grid-cols-2 gap-2">
+          <select aria-label="Request type" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} className="field !mt-0"><option value="add">Add a skill</option><option value="correct">Correct a record</option><option value="reassess">Reassess</option><option value="recognize_work">Recognize new work</option><option value="qualification">Review a qualification</option></select>
+          <input aria-label="Score you are asking for, 0 to 10" type="number" min={0} max={10} step={0.5} value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} placeholder="Score 0-10" className="field !mt-0" />
+        </div>
+        <textarea aria-label="Explanation" required rows={2} value={form.explanation} onChange={(e) => setForm({ ...form, explanation: e.target.value })} placeholder="Why should this change?" className="field !mt-0" />
+        <input aria-label="Supporting evidence" value={form.evidence} onChange={(e) => setForm({ ...form, evidence: e.target.value })} placeholder="Evidence or link (optional)" className="field !mt-0" />
+        <PillButton type="submit" variant="primary">Send request</PillButton>
+      </form>
+      <ul className="mt-3 space-y-1">{rows.map((r) => <li key={r.id} className="flex items-center gap-2 text-[12px] text-slate-600"><span className="min-w-0 flex-1 truncate">{r.skill}{r.review_notes ? `: ${r.review_notes}` : ""}</span><StatusPill status={r.status} /></li>)}</ul>
+    </Card>
+  );
 }

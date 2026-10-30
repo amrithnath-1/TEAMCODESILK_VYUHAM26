@@ -5,6 +5,56 @@ export interface SessionUser {
   display_name: string;
   role: Role;
   employee_id: string | null;
+  org_role: "OWNER" | "ADMIN" | "MANAGER" | "STAFF";
+  org_id: string;
+  org_name: string;
+  onboarding_state: "collecting" | "review" | "complete";
+}
+
+export interface OnboardingStatus {
+  state: "collecting" | "review" | "complete";
+  org_name: string;
+  profile: Record<string, string>;
+  missing: string[];
+  messages: { role: string; content: string; created_at: string }[];
+}
+
+export interface Member { username: string; display_name: string; role: SessionUser["org_role"]; employee_id: string | null }
+export interface Invitation { id: string; email: string | null; role: string; created_by: string; created_at: string; expires_at: string; used_by: string | null; used_at: string | null; revoked_at: string | null }
+export interface SkillRequest { id: string; employee_id: string; employee_name: string; skill: string; kind: string; requested_score: number | null; explanation: string; evidence: string | null; status: string; reviewer: string | null; review_notes: string | null; created_at: string }
+
+export interface ProjectsOverview {
+  total: number;
+  stages: { key: string; label: string; count: number }[];
+  projects: { project_id: string; name: string; stage: string; stage_label: string; priority: string; team: { employee_id: string; name: string; designation: string }[] }[];
+}
+
+export interface RoomMessage { id: string; username: string; display_name: string; content: string; kind: string; created_at: string }
+export interface MinutesRow {
+  id: string; title: string; status: string; source: string; created_by: string; created_at: string; approved_by: string | null;
+  extracted: { facts: { meeting_date: string | null; participants: string[]; agenda: string[]; decisions: string[]; action_items: { text: string; owner: string | null; due: string | null }[]; open_questions: string[]; risks: string[] }; interpretations: string[] };
+}
+export interface RoomView {
+  room: { id: string; name: string; status: string; project_id: string };
+  members: { username: string; display_name: string; role: string; status: string }[];
+  attachments: { id: string; filename: string; size: number; status: string; uploaded_by: string; created_at: string }[];
+  minutes: MinutesRow[];
+  decisions: { id: string; text: string; approved_by: string; approved_at: string }[];
+  action_items: { id: string; text: string; owner: string | null; due: string | null; status: string }[];
+}
+
+export interface BudgetReport {
+  project_id: string; has_budget: boolean; currency: string | null; estimated_labor_minor: number; estimated_non_labor_minor: number; committed_minor: number; actual_minor: number;
+  tasks_without_rate: string[]; tasks_without_owner: string[]; assumptions: string[]; scenarios: { basis: string; optimistic_minor: number; expected_minor: number; conservative_minor: number } | null;
+  total_minor?: number; labor_budget_minor?: number | null; reserve_minor?: number; includes_tax?: boolean; hard_limit?: boolean; remaining_minor?: number; forecast_at_completion_minor?: number; variance_minor?: number; status?: string;
+}
+
+export interface Optimization {
+  status: string; feasible: boolean; cost_aware: boolean; currency: string | null; proposal_id: string; total_cost_minor?: number | null; explanation?: string;
+  solver: { status: string; nodes: number; gap: number | null };
+  problems?: { task_id: string | null; title: string; reason: string; kind: string; options: string[] }[];
+  over_budget?: { overrun_minor: number; lowest_feasible_cost_minor: number; why: string; options: string[] } | null;
+  assignments: { task_id: string; task_title: string; employee_id: string; employee_name: string; estimated_hours: number; estimated_cost_minor: number | null; hours_per_week: number; weeks: [number, number]; existing_weekly_hours: number; weekly_capacity: number; rationale: string; risks: string[]; suitability: { score: number; skill: number } }[];
 }
 
 export interface Skill {
@@ -138,6 +188,7 @@ export interface Weights {
 }
 
 export interface Project {
+  manager_usernames?: string[];
   id: string;
   name: string;
   business_objective: string;
@@ -147,6 +198,8 @@ export interface Project {
 }
 
 export interface Summary {
+  pending_skill_requests: number;
+  weights_updated_at: string | null;
   total_employees: number;
   total_tasks: number;
   workload_gini_index: number;

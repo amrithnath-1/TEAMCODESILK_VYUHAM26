@@ -98,7 +98,13 @@ def test_failed_logins_from_one_address_stop_filling_the_ledger():
     before = len(STORE.ledger.all())
     codes = [client.post("/api/v1/auth/login", json={"username": f"x{i}", "password": "n"}).status_code for i in range(35)]
     assert codes.count(401) == 30 and codes.count(429) == 5
-    assert len(STORE.ledger.all()) - before == 30
+    assert len(STORE.ledger.all()) == before       # an unknown name belongs to no company's ledger
+
+
+def test_failed_login_for_a_real_account_is_audited():
+    before = len(STORE.ledger.all())
+    assert client.post("/api/v1/auth/login", json={"username": "kabir", "password": "nope"}).status_code == 401
+    assert STORE.ledger.all()[-1].action == "LOGIN_FAILED" and len(STORE.ledger.all()) == before + 1
 
 
 def test_deactivated_employee_token_stops_working(admin):
@@ -156,9 +162,13 @@ def test_reset_saves_a_restorable_backup_first(admin):
     db.notify("test", "keep me", "body", audience_role="ADMIN")
     r = client.post("/api/v1/reset", headers=admin, json={"confirm": "RESET"})
     assert r.status_code == 200
-    saved = sqlite3.connect(db.BACKUP_DIR / r.json()["backup"] / "vyuham.db")
-    assert saved.execute("SELECT COUNT(*) FROM notifications WHERE title = 'keep me'").fetchone()[0] == 1
-    saved.close()
+    folder = db.BACKUP_DIR / r.json()["backup"]
+    if db.DB_URL:
+        assert [n for n in json.loads((folder / "notifications.json").read_text(encoding="utf-8")) if n["title"] == "keep me"]
+    else:
+        saved = sqlite3.connect(folder / "vyuham.db")
+        assert saved.execute("SELECT COUNT(*) FROM notifications WHERE title = 'keep me'").fetchone()[0] == 1
+        saved.close()
     assert not db.rows("SELECT id FROM notifications WHERE title = 'keep me'")
     second = client.post("/api/v1/reset", headers=admin, json={"confirm": "RESET"}).json()["backup"]
     assert second != r.json()["backup"]
@@ -182,7 +192,7 @@ def test_startup_refuses_to_overwrite_data_when_snapshot_is_missing():
             Store()
         assert db.rows("SELECT id FROM notifications WHERE title = 'keep me'")
     finally:
-        STORE.save()
+        STORE.save(force=True)
 
 
 def _isolated_db(monkeypatch, tmp_path, migrations):
@@ -194,6 +204,7 @@ def _isolated_db(monkeypatch, tmp_path, migrations):
     monkeypatch.setattr(db, "_initialized", False)
 
 
+@pytest.mark.skipif(bool(db.DB_URL), reason="SQLite migration runner")
 def test_failed_migration_rolls_back_and_a_backup_was_taken(monkeypatch, tmp_path):
     _isolated_db(monkeypatch, tmp_path, ["CREATE TABLE a (id INTEGER PRIMARY KEY);"])
     db.init()
@@ -214,3 +225,50 @@ def test_security_headers_and_docs_in_development():
     r = client.get("/api/v1/health")
     assert r.headers["x-content-type-options"] == "nosniff" and r.headers["x-frame-options"] == "DENY"
     assert "default-src 'none'" in r.headers["content-security-policy"]
+
+
+@pytest.mark.skipif(not db.DB_URL, reason="Postgres migration runner")
+def test_failed_postgres_migration_rolls_back_and_a_backup_was_taken(monkeypatch, tmp_path):
+    from app import pg
+    monkeypatch.setattr(db, "BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(pg, "MIGRATIONS", pg.MIGRATIONS + ["CREATE TABLE half_done (id INTEGER); CREATE TABLE meta (id INTEGER);"])
+    with pytest.raises(Exception):
+        pg.migrate(db.backup, db.MIGRATION_URL)
+    assert db.one("SELECT COUNT(*) AS n FROM schema_migrations WHERE version = ?", (len(pg.MIGRATIONS),))["n"] == 0
+    assert db.one("SELECT COUNT(*) AS n FROM pg_tables WHERE tablename = 'half_done' AND schemaname = ?", (db.SCHEMA,))["n"] == 0
+    assert len(list((tmp_path / "backups").iterdir())) == 1
+
+
+@pytest.mark.skipif(not db.DB_URL, reason="Postgres schema")
+def test_postgres_schema_has_every_sqlite_column():
+    from app import pg
+    mem = sqlite3.connect(":memory:")
+    for script in db.MIGRATIONS:
+        mem.executescript(script)
+    for table in db.BUSINESS_TABLES:
+        if table == "chunks_fts":
+            continue
+        ours = {r[1] for r in mem.execute(f"PRAGMA table_info({table})")}
+        theirs = {r["column_name"] for r in db.rows("SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?", (db.SCHEMA, table))}
+        assert ours <= theirs, table
+    mem.close()
+
+
+@pytest.mark.skipif(not db.DB_URL, reason="Postgres safety guard")
+def test_reset_is_refused_on_any_other_supabase_project(admin, monkeypatch):
+    monkeypatch.setenv("VYUHAM_DEV_PROJECT_REF", "some-other-project")
+    assert client.post("/api/v1/reset", headers=admin, json={"confirm": "RESET"}).status_code == 403
+
+
+def test_remote_database_requires_an_explicit_environment(monkeypatch):
+    monkeypatch.setattr(db, "DB_URL", "postgresql://postgres.ref:pw@host:5432/postgres")
+    monkeypatch.delenv("VYUHAM_ENV", raising=False)
+    with pytest.raises(RuntimeError):
+        db.environment()
+
+
+def test_malformed_url_is_rejected_without_echoing_the_password():
+    from app import pg
+    with pytest.raises(RuntimeError) as err:
+        pg.open_pool("postgresql://postgres.ref:secret@1234@host:5432/postgres", "vyuham")
+    assert "secret" not in str(err.value) and "1234" not in str(err.value)

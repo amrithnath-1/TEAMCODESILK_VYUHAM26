@@ -206,17 +206,18 @@ def create_employee(data: Dict, actor: str) -> Dict:
     with STORE.lock:
         if any(e.email.lower() == data["email"].lower() for e in STORE.employees):
             raise HTTPException(409, "An employee with this email already exists")
-        number = max(int(e.id.split("-")[1]) for e in STORE.employees) + 1
+        number = max([int(e.id.split("-")[1]) for e in STORE.employees] + [STORE.counters.get("EMP", 0)]) + 1
         emp = Employee(id=f"EMP-{number:02d}", team_role_id="ROLE-ENG", committed_hrs=0, delivery_completion_rate=0, work_quality_acceptance_rate=0,
                        deadline_reliability_rate=0, collaboration_review_score=0, learning_improvement_score=0, preferred_tasks=[], learning_goals=[],
                        sufficient_evidence=False, availability=AvailabilitySchedule(meeting_hrs_week=data["meeting_hrs"]), **data)
         base = data["name"].split()[0].lower()
         username, n = base, 1
-        while STORE.user(username):
+        while db.account_org(username):     # usernames are unique across all companies
             n += 1
             username = f"{base}{n}"
         STORE.employees.append(emp)
         STORE.users.append(User(username=username, display_name=emp.name, role="STAFF", employee_id=emp.id, **hash_password(password)))
+        db.add_account(username)
         STORE.ledger.record(actor, "EMPLOYEE_CREATED", emp.id, {"name": emp.name, "username": username})
     return {"employee": engine.compute_6_scores(emp), "username": username}
 
@@ -270,7 +271,7 @@ def create_change_request(employee_id: str, kind: str, task_id: Optional[str], d
 def list_change_requests(employee_id: Optional[str] = None) -> List[Dict]:
     if employee_id:
         return db.rows("SELECT * FROM change_requests WHERE employee_id = ? ORDER BY created_at DESC", (employee_id,))
-    return db.rows("SELECT * FROM change_requests ORDER BY status = 'open' DESC, created_at DESC LIMIT 50")
+    return db.rows("SELECT * FROM change_requests WHERE org_id = ? ORDER BY status = 'open' DESC, created_at DESC LIMIT 50", (db.org(),))
 
 
 def resolve_change_request(request_id: str, approve: bool, note: str, new_deadline: Optional[int], leave_days: int, actor: str) -> Dict:

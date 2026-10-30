@@ -1,4 +1,4 @@
-import { Bell, Bot, FolderKanban, GitBranch, LayoutDashboard, LogOut, Menu, ScrollText, Search, Settings, ShieldCheck, UserCircle, Users, X } from "lucide-react";
+import { Bell, Bot, Building2, FolderKanban, GitBranch, LayoutDashboard, LogOut, Menu, ScrollText, Search, Settings, ShieldCheck, UserCircle, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken, setUnauthorizedHandler } from "./api";
 import { Avatar, Toast } from "./components/ui";
@@ -7,6 +7,8 @@ import { AuditView } from "./pages/AuditView";
 import { CoordinatorView } from "./pages/CoordinatorView";
 import { EmployeeProfile } from "./pages/EmployeeProfile";
 import { Login } from "./pages/Login";
+import { Onboarding } from "./pages/Onboarding";
+import { TeamView } from "./pages/TeamView";
 import { ManagerView } from "./pages/ManagerView";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { ProjectsView } from "./pages/ProjectsView";
@@ -21,6 +23,7 @@ const ADMIN_NAV = [
   { key: "manager", label: "Allocation & Approvals", icon: GitBranch },
   { key: "coordinator", label: "AI Coordinator", icon: Bot },
   { key: "workforce", label: "Workforce", icon: Users },
+  { key: "team", label: "Team & Roles", icon: Building2 },
   { key: "audit", label: "Audit Ledger", icon: ScrollText },
   { key: "settings", label: "Settings", icon: Settings },
 ];
@@ -98,6 +101,7 @@ export default function App() {
 
   if (booting) return <div className="grid min-h-screen place-items-center text-sm text-slate-400">Loading…</div>;
   if (!user) return <Login onLogin={(u) => { setUser(u); setView(u.role === "ADMIN" ? "dashboard" : "portal"); }} />;
+  if (user.role === "ADMIN" && user.onboarding_state !== "complete") return <Onboarding user={user} onLogout={logout} onComplete={() => api<SessionUser>("/auth/me").then(setUser).catch(logout)} />;
 
   const isAdmin = user.role === "ADMIN";
   const items = isAdmin ? ADMIN_NAV : STAFF_NAV;
@@ -125,7 +129,7 @@ export default function App() {
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-slate-100 bg-white transition-transform lg:translate-x-0 ${menuOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-2 px-5 py-4">
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-cyan-400 text-white"><ShieldCheck size={18} /></div>
-          <div className="mr-auto leading-tight"><div className="text-lg font-bold tracking-tight text-brand-600">Vyuham</div><div className="-mt-0.5 text-[10px] font-medium uppercase tracking-widest text-slate-400">Workforce AI</div></div>
+          <div className="mr-auto leading-tight"><div className="text-lg font-bold tracking-tight text-brand-600">Vyuham</div><div className="-mt-0.5 max-w-[130px] truncate text-[10px] font-medium uppercase tracking-widest text-slate-400">{user.org_name}</div></div>
           <button aria-label="Close menu" className="rounded-full p-1 text-slate-400 lg:hidden" onClick={() => setMenuOpen(false)}><X size={18} /></button>
         </div>
         <nav aria-label="Main" className="flex-1 space-y-1 overflow-y-auto px-3">
@@ -136,6 +140,7 @@ export default function App() {
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition ${active ? "bg-brand-500 text-white" : "text-slate-600 hover:bg-slate-100"}`}>
                 <i.icon size={17} />{i.label}
                 {i.key === "manager" && !!summary?.pending_approvals.length && <span className={`ml-auto rounded-full px-1.5 text-[10px] font-bold ${active ? "bg-white text-brand-600" : "bg-rose-500 text-white"}`}>{summary.pending_approvals.length}</span>}
+                {i.key === "team" && !!summary?.pending_skill_requests && <span className={`ml-auto rounded-full px-1.5 text-[10px] font-bold ${active ? "bg-white text-brand-600" : "bg-rose-500 text-white"}`}>{summary.pending_skill_requests}</span>}
               </button>
             );
           })}
@@ -182,13 +187,14 @@ export default function App() {
         {needSummary && <div className="p-10 text-center text-sm text-slate-400">{loadErr ? `Cannot reach the API: ${loadErr}` : "Loading enterprise data…"}</div>}
         {!needSummary && (
           <>
-            {isAdmin && view === "dashboard" && <AdminDashboard summary={summary!} projects={projects} reload={reload} onNav={nav} toast={notify} />}
+            {isAdmin && view === "dashboard" && <AdminDashboard summary={summary!} projects={projects} reload={reload} onNav={nav} toast={notify} refreshKey={tick} />}
             {isAdmin && view === "manager" && <ManagerView summary={summary!} reload={reload} toast={notify} />}
             {isAdmin && view === "workforce" && <WorkforceView summary={summary!} reload={reload} toast={notify} onNav={nav} />}
+            {isAdmin && view === "team" && <TeamView user={user} toast={notify} reload={reload} onNav={nav} refreshKey={tick} />}
             {isAdmin && view === "audit" && <AuditView refreshKey={tick} toast={notify} />}
             {isAdmin && view === "settings" && <SettingsView summary={summary!} reload={reload} toast={notify} onReset={reset} />}
             {view === "projects" && <ProjectsView isAdmin={isAdmin} onNav={nav} toast={notify} refreshKey={tick} reload={reload} />}
-            {view === "project" && viewId && <ProjectDetail key={viewId} id={viewId} isAdmin={isAdmin} onNav={nav} toast={notify} reload={reload} summary={summary} />}
+            {view === "project" && viewId && <ProjectDetail key={viewId} id={viewId} isAdmin={isAdmin} user={user} onNav={nav} toast={notify} reload={reload} summary={summary} />}
             {view === "employee" && viewId && <EmployeeProfile key={viewId} employeeId={viewId} isAdmin={isAdmin} isSelf={user.employee_id === viewId} onNav={nav} toast={notify} reload={reload} />}
             {view === "profile" && user.employee_id && <EmployeeProfile employeeId={user.employee_id} isAdmin={isAdmin} isSelf onNav={nav} toast={notify} reload={reload} />}
             {view === "coordinator" && <CoordinatorView summary={summary ?? undefined} projects={projects} isAdmin={isAdmin} seed={chatSeed} onConsumedSeed={() => setChatSeed(null)} reload={reload} onNav={nav} />}

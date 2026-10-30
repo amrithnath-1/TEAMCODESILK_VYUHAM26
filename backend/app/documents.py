@@ -153,7 +153,7 @@ def store_upload(project_id: str, filename: str, data: bytes, username: str) -> 
     with db.tx() as c:
         c.execute("INSERT INTO documents (id, org_id, project_id, filename, version, sha256, size, ext, status, stored_path, uploaded_by, uploaded_at) "
                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                  (doc_id, db.ORG_ID, project_id, name, version, sha, len(data), ext, "uploaded", str(path), username, utcnow()))
+                  (doc_id, db.org(), project_id, name, version, sha, len(data), ext, "uploaded", str(path), username, utcnow()))
     return db.one("SELECT * FROM documents WHERE id = ?", (doc_id,))
 
 
@@ -234,6 +234,13 @@ def search(project_id: str, query: str, limit: int = 6) -> List[Dict]:
     q = _fts_query(query)
     if not q:
         return []
+    if db.DB_URL:
+        pg_q = " | ".join(q.replace('"', "").split(" OR "))     # words are already limited to letters and numbers
+        return db.rows(
+            "SELECT c.id, c.text, c.location, c.suspicious, d.filename, d.version, ts_rank_cd(f.tsv, to_tsquery('english', ?)) AS rank "
+            "FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN documents d ON d.id = c.document_id "
+            "WHERE f.tsv @@ to_tsquery('english', ?) AND f.project_id = ? AND c.project_id = ? AND d.is_current = 1 "
+            "ORDER BY rank DESC, c.id LIMIT ?", (pg_q, pg_q, project_id, project_id, limit))
     return db.rows(
         "SELECT c.id, c.text, c.location, c.suspicious, d.filename, d.version, bm25(chunks_fts) AS rank "
         "FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.chunk_id JOIN documents d ON d.id = c.document_id "

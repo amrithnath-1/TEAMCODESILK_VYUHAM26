@@ -26,7 +26,7 @@ export function ManagerView({ summary, reload, toast }: { summary: Summary; relo
   const [disruptEmp, setDisruptEmp] = useState("EMP-01");
   const [disruptStatus, setDisruptStatus] = useState<"On Leave" | "Overloaded" | "Available">("On Leave");
   const [disruptDays, setDisruptDays] = useState(3);
-  const [wiTask, setWiTask] = useState("TSK-104");
+  const [wiTask, setWiTask] = useState(summary.tasks[0]?.id ?? "");
   const [wiEmp, setWiEmp] = useState("EMP-03");
   const [wi, setWi] = useState<any>(null);
   const [brief, setBrief] = useState({ name: "", objective: "", priority: "High", deadline_days: 30 });

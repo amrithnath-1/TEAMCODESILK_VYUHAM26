@@ -43,7 +43,7 @@ def get_profile(employee_id: str) -> Dict:
 def save_profile(employee_id: str, profile: Dict, actor: str) -> Dict:
     STORE.employee(employee_id)
     with db.tx() as c:
-        c.execute("INSERT INTO profiles VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+        c.execute("INSERT INTO profiles (employee_id, json, updated_at) VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
                   (employee_id, db.dumps(profile), utcnow()))
     with STORE.lock:
         STORE.ledger.record(actor, "EMPLOYEE_PROFILE_UPDATED", employee_id, {"fields": sorted(profile.keys())})

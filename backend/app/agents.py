@@ -226,6 +226,10 @@ class TaskAllocationAgent:
     def _allocate_one(self, task: Task, actor: str) -> Dict:
         task.status = "CANDIDATES_SCORED"
         cands = engine.rank_candidates(STORE.employees, task, STORE.weights)
+        if not cands:       # a company with no employees yet
+            task.status = "READY_FOR_ALLOCATION"
+            return {"task_id": task.id, "task_title": task.title, "priority": task.priority, "status": "UNASSIGNED_INFEASIBLE",
+                    "recommended": None, "shortlist": [], "explanation": "No eligible candidate: this organization has no employees yet."}
         winner = cands[0]
         runner_up = next((c for c in cands[1:] if c["eligible"]), None)
         disq = [c for c in cands if not c["eligible"]]
@@ -581,14 +585,14 @@ class CoordinationAgent:
                 return scores(emp) if user.get("emp") == emp.id else reply("Staff can only view their own evaluation.")
             return reply("I can help with your own tasks, scores and requests. Team-wide workload, risks, rankings and approvals need an administrator.")
         if any(k in q for k in ("leave", "sick", "unavailable", "out of office", "absent", "emergency")):
-            return reply("To report someone as unavailable, tell me who and for how long, for example “Vikram is on leave for 3 days”. You will get a card to approve.")
+            return reply("To report someone as unavailable, tell me who and for how long, for example “Asha is on leave for 3 days”. You will get a card to approve.")
         if "what if" in q or "what-if" in q:
             if task and emp:
                 trace += ["Agent 3: counterfactual simulation"]
                 r = TaskAllocationAgent().what_if(task.id, emp.id)
                 return reply(f"If {emp.name} takes {task.id}: suitability {r['candidate']['suitability_score']}/100 (rank #{r['rank']}), "
                              f"post-load {r['candidate']['utilization_after_pct']}%, Gini {r['gini_before']} → {r['gini_after']}. {r['verdict']}.", r)
-            return reply("Tell me both a task and a person, e.g. “What if Priya takes TSK-104?”")
+            return reply("Tell me both a task and a person, e.g. “What if Asha takes TSK-12?”")
         if any(k in q for k in ("who should", "best for", "best person", "recommend", "assign")) and task:
             trace += [f"Entity: {task.id}", "Engine: hard filter + weighted scoring", "Agent 3: explanation"]
             cands = engine.rank_candidates(STORE.employees, task, STORE.weights)
@@ -631,8 +635,8 @@ class CoordinationAgent:
             return reply(f"{len(avail)} employees have ≥ 8h net free capacity this week. Top bandwidth: "
                          + ", ".join(f"{e['name']} ({e['free_capacity_hrs']}h, Skill {e['skill_score']})" for e in avail[:4]) + ".",
                          {"available_shortlist": avail[:5]})
-        return reply("I can help with: who should do a task (“Who should do TSK-104?”), what-if simulations (“What if Priya takes TSK-104?”), "
-                     "disruptions (“Vikram is on leave for 3 days”), workload fairness, risks, skill gaps and pending approvals.")
+        return reply("I can help with: who should do a task (“Who should do TSK-12?”), what-if simulations (“What if Asha takes TSK-12?”), "
+                     "disruptions (“Asha is on leave for 3 days”), workload fairness, risks, skill gaps and pending approvals.")
 
     @staticmethod
     def _find_employee(q: str):

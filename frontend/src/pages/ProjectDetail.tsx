@@ -4,14 +4,16 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { api, apiDownload, apiUpload } from "../api";
 import { BANDS, Donut, HealthBadge } from "../components/ProgressDonut";
 import { CandidateModal } from "../components/Modals";
+import { ProjectBudget } from "../components/ProjectBudget";
+import { ProjectRoom } from "../components/ProjectRoom";
 import { Bar, Card, Empty, Modal, PillButton, PriorityBadge, StatusPill } from "../components/ui";
-import type { DocumentRow, EvidenceItem, Nav, Plan, PlanTask, Project, ProjectProgress, Spec, Summary, Task } from "../types";
+import type { DocumentRow, EvidenceItem, Nav, Plan, PlanTask, Project, ProjectProgress, SessionUser, Spec, Summary, Task } from "../types";
 
 type Toast = (m: string, k?: "ok" | "err") => void;
 const SPEC_SECTIONS: [string, string][] = [["objectives", "Objectives"], ["business_requirements", "Business requirements"], ["functional_requirements", "Functional requirements"], ["non_functional_requirements", "Non-functional requirements"],
   ["deliverables", "Deliverables"], ["technical_requirements", "Technical requirements"], ["constraints", "Constraints & dependencies"], ["deadlines", "Deadlines & milestones"], ["budget", "Budget & resources"], ["required_skills", "Required skills"], ["risks", "Risks"]];
 
-export function ProjectDetail({ id, isAdmin, onNav, toast, reload, summary }: { id: string; isAdmin: boolean; onNav: Nav; toast: Toast; reload: () => void; summary: Summary | null }) {
+export function ProjectDetail({ id, isAdmin, user, onNav, toast, reload, summary }: { id: string; isAdmin: boolean; user: SessionUser; onNav: Nav; toast: Toast; reload: () => void; summary: Summary | null }) {
   const [data, setData] = useState<{ project: Project; progress: ProjectProgress; tasks: Task[] } | null>(null);
   const [tab, setTab] = useState("overview");
   const [err, setErr] = useState<string | null>(null);
@@ -28,6 +30,9 @@ export function ProjectDetail({ id, isAdmin, onNav, toast, reload, summary }: { 
   if (!data) return <div className="p-10 text-center text-sm text-slate-400">Loading project…</div>;
   const { project, progress: p, tasks } = data;
   const tabs = isAdmin ? [["overview", "Overview"], ["documents", "Documents"], ["spec", "Specification"], ["plan", "Plan"], ["tasks", `Tasks (${tasks.length})`], ["evaluation", "Evaluation"]] : [["overview", "Overview"], ["documents", "Documents"], ["tasks", `Tasks (${tasks.length})`]];
+  const canManage = isAdmin || (user.org_role === "MANAGER" && (project.manager_usernames ?? []).includes(user.username));
+  tabs.push(["room", "Team room"]);
+  if (canManage) tabs.push(["budget", "Budget"]);
 
   const archive = async () => {
     if (!confirm(`Archive ${project.name}? It leaves dashboards but its records are kept.`)) return;
@@ -62,6 +67,8 @@ export function ProjectDetail({ id, isAdmin, onNav, toast, reload, summary }: { 
       {tab === "plan" && isAdmin && <PlanTab id={id} toast={toast} changed={changed} onTasks={() => setTab("tasks")} />}
       {tab === "tasks" && <TasksTab id={id} tasks={tasks} isAdmin={isAdmin} toast={toast} changed={changed} summary={summary} />}
       {tab === "evaluation" && isAdmin && <Evaluation id={id} tasks={tasks} />}
+      {tab === "room" && <ProjectRoom id={id} canManage={canManage} username={user.username} toast={toast} />}
+      {tab === "budget" && canManage && <ProjectBudget id={id} isAdmin={isAdmin} toast={toast} changed={changed} />}
     </div>
   );
 }

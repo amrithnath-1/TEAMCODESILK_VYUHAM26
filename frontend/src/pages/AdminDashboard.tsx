@@ -1,10 +1,9 @@
 import { Bot, Brain, FolderKanban, GitBranch, Plug, Radar, Scale, ScrollText, Users } from "lucide-react";
 import { AssistantPanel } from "../components/AssistantPanel";
-import { ProjectProgressCard } from "../components/ProgressDonut";
+import { ProjectOverview } from "../components/ProjectOverview";
 import { useEffect, useMemo, useState } from "react";
 import { Bar as RBar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api";
-import { ProjectDonut } from "../components/ProjectDonut";
 import { Avatar, Card, Empty, FACTOR_LABELS, PillButton, Ring, StatusPill } from "../components/ui";
 import type { Nav, ProjectProgress, Risk, SkillGap, Summary, Weights } from "../types";
 
@@ -21,7 +20,7 @@ const TILES = [
 
 const DEPT_COLORS = ["#2f80ed", "#22c3d6", "#34c38f", "#f6a03b", "#e8577a", "#8b5cf6"];
 
-export function AdminDashboard({ summary, projects, reload, onNav, toast }: { summary: Summary; projects: ProjectProgress[]; reload: () => void; onNav: Nav; toast: (m: string, k?: "ok" | "err") => void }) {
+export function AdminDashboard({ summary, projects, reload, onNav, toast, refreshKey }: { summary: Summary; projects: ProjectProgress[]; reload: () => void; onNav: Nav; toast: (m: string, k?: "ok" | "err") => void; refreshKey: unknown }) {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [gaps, setGaps] = useState<SkillGap[]>([]);
   const [weights, setWeights] = useState<Weights>(summary.weights);
@@ -81,9 +80,7 @@ export function AdminDashboard({ summary, projects, reload, onNav, toast }: { su
         <AssistantPanel isAdmin projects={projects} reload={reload} onNav={onNav} height={300} />
 
         <Card title="Project progress" action={<PillButton onClick={() => onNav("projects")}>View all</PillButton>}>
-          {projects.length === 0 ? <p className="text-[13px] text-slate-400">No active projects.</p> : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{projects.slice(0, 6).map((p) => <ProjectProgressCard key={p.project_id} p={p} onNav={onNav} />)}</div>
-          )}
+          <ProjectOverview onNav={onNav} refreshKey={refreshKey} tasks={summary.tasks} employees={summary.employees} />
         </Card>
 
         <Card title="Modules">
@@ -97,9 +94,7 @@ export function AdminDashboard({ summary, projects, reload, onNav, toast }: { su
           </div>
         </Card>
 
-        <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-          <Card><ProjectDonut tasks={summary.tasks} employees={summary.employees} /></Card>
-
+        <div>
           <Card title="Workload distribution" action={<span className="text-[11px] text-slate-400">Guardrails: 85% HITL · 95% hard ceiling</span>}>
             <div className="mb-3 grid grid-cols-3 gap-3">
               <Kpi label="Workload Gini" value={summary.workload_gini_index.toFixed(4)} sub="0 = perfectly even" />
@@ -217,6 +212,7 @@ export function AdminDashboard({ summary, projects, reload, onNav, toast }: { su
             <PillButton onClick={normalize}><Scale size={13} />Normalize</PillButton>
             <PillButton variant="primary" disabled={saving || Math.abs(weightSum - 1) > 0.001} onClick={saveWeights}>Save weights</PillButton>
           </div>
+          <p className="mt-2 text-[11px] text-slate-400">Moving a slider changes only that weight; Normalize rescales all of them. Scores rank candidates and are not probabilities of success. {summary.weights_updated_at ? `Last changed ${summary.weights_updated_at.slice(0, 16).replace("T", " ")}.` : "Using the default weights."}</p>
         </Card>
 
         <Card title="Ledger integrity">

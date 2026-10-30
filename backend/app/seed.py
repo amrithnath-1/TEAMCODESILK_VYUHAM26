@@ -171,7 +171,7 @@ def seed_integration_events() -> List[IntegrationEvent]:
 
 
 def seed_users(employees: List[Employee]) -> List[User]:
-    users = [User(username=ADMIN_ACCOUNT["username"], display_name=ADMIN_ACCOUNT["display_name"], role="ADMIN",
+    users = [User(username=ADMIN_ACCOUNT["username"], display_name=ADMIN_ACCOUNT["display_name"], role="OWNER",
                   **hash_password(ADMIN_ACCOUNT["password"]))]
     for e in employees:
         users.append(User(username=e.email.split("@")[0], display_name=e.name, role="STAFF", employee_id=e.id,

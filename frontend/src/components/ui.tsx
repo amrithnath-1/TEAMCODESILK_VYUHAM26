@@ -69,6 +69,13 @@ const STATUS_STYLES: Record<string, string> = {
   BLOCKED_BY_DEPENDENCY: "bg-slate-300 text-slate-700",
   READY_FOR_ALLOCATION: "bg-slate-100 text-slate-600",
   UNASSIGNED_INFEASIBLE: "bg-rose-100 text-rose-700",
+  pending: "bg-orange-400 text-white",
+  under_review: "bg-sky-400 text-white",
+  rejected: "bg-rose-400 text-white",
+  more_information: "bg-amber-100 text-amber-800",
+  within_budget: "bg-emerald-400/90 text-white",
+  at_risk: "bg-amber-400 text-white",
+  over_budget: "bg-rose-400 text-white",
 };
 
 export function StatusPill({ status }: { status: string }) {

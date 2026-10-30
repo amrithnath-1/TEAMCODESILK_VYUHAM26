@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 SkillLevel = Literal["Beginner", "Intermediate", "Advanced", "Expert"]
 Priority = Literal["Low", "Medium", "High", "Critical"]
-Role = Literal["ADMIN", "STAFF"]
+Role = Literal["OWNER", "ADMIN", "MANAGER", "STAFF"]
 
 # Task lifecycle (state chart, section 3.3)
 TASK_STATES = [
@@ -83,6 +83,7 @@ class Project(BaseModel):
     created_by: str = "SYSTEM"
     org_id: str = "ORG-1"
     start_date: Optional[str] = None
+    manager_usernames: List[str] = []
 
 
 class Task(BaseModel):
@@ -271,6 +272,11 @@ class DisputeRequest(BaseModel):
 class DisputeResolveRequest(BaseModel):
     resolution: Literal["Upheld", "Rejected"]
     note: str = Field(default="", max_length=500)
+
+
+class ConversationUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    status: Optional[Literal["active", "archived"]] = None
 
 
 class ResetRequest(BaseModel):

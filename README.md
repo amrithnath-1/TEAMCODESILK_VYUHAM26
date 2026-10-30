@@ -68,6 +68,31 @@ Data is stored in `backend/data/` (not committed). The **Reset all demo data** b
 
 Set `VYUHAM_ENV` to `development`, `staging` or `production` (default `development`). Outside development, demo data is never seeded, reset is refused, `AF07_SECRET_KEY` is required, and the API docs are off. Sample files to try are in `docs/samples/`.
 
+## Companies, roles and data
+
+- **Company registration:** choose *New company* on the sign-in page, then answer the onboarding conversation. Type `<start>` at the review step to reach the dashboard. Answers are saved, so signing out never restarts it.
+- **Joining:** employees use an invitation code from *Team & Roles*. Codes work once, expire after 7 days, and can be tied to one email. Nobody joins by naming a company.
+- **Roles:** Owner, Administrator, Manager, Employee, enforced by the API. Role changes need the current password again and are written to the audit ledger. A company always keeps at least one owner.
+- **Isolation:** every request runs as the company in its signed token. On Supabase the app connects as `vyuham_app`, a restricted role, and row-level security limits it to that company's rows.
+- **Core records:** employees, projects, tasks and approvals are still one JSON row per company (`core_state`). Newer features use normal tables. Run one backend worker only, because core records are cached in the process.
+- **Files** stay on the backend's disk (`backend/data/uploads`), not in Supabase Storage. They are not scanned for malware.
+- **Team rooms** refresh by polling every few seconds rather than Supabase Realtime.
+
+### Budget-aware allocation
+
+Money is stored as integer minor units. *Budget* on a project shows estimated, committed and actual costs separately. *Propose a team* runs `backend/app/optimizer.py`, an exact branch-and-bound search: required skills, suitability threshold and weekly capacity come first, then the budget, then cost plus configurable penalties. It changes nothing until each assignment is approved. Suitability is an explainable heuristic, not a probability. The default penalties are a starting policy, not a validated optimum.
+
+### Supabase setup
+
+```
+SUPABASE_DB_URL=            restricted vyuham_app role, session pooler, port 5432
+SUPABASE_MIGRATION_DB_URL=  owner login, used only for migrations
+VYUHAM_ENV=development
+VYUHAM_DEV_PROJECT_REF=     the only project where reset and demo seeding are allowed
+```
+
+Without `SUPABASE_DB_URL` the app uses local SQLite. `python -m scripts.load_sqlite_backup <file>` (from `backend/`, using the owner login) copies a SQLite backup into an empty Supabase schema. To run tests on Postgres, set `VYUHAM_TEST_DB_URL` and `VYUHAM_TEST_OWNER_URL`; they use a temporary schema that is dropped afterwards. The Free plan has no automatic backups, so schedule your own.
+
 ## Demo accounts (seeded in development only)
 
 | Portal | Username | Password |

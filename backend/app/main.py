@@ -3,20 +3,21 @@ import csv
 from datetime import date
 import io
 import os
-import time
-from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from . import assistant, db, documents, engine, llm, progress as progress_mod, services, workflow, workforce as workforce_mod
+from . import assistant, db, documents, engine, llm, progress as progress_mod, services, skillreview, workflow, workforce as workforce_mod
 from .agents import (CoordinationAgent, PerformanceEvaluationAgent, ProgressMonitoringAgent, ProjectAnalysisAgent,
                      RiskPredictionAgent, TaskAllocationAgent, WorkforceIntelligenceAgent)
 from .audit import utcnow
-from .auth import assert_self_or_admin, check_config, current_user, issue_token, require_admin, verify_password
-from .models import (DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
+from .org import session_user
+from .ratelimit import _rate_windows, rate_check, rate_limit
+from .routes_company import router as company_router
+from .auth import assert_self_or_admin, check_config, current_user, decode_token, issue_token, organization_from, require_admin, verify_password
+from .models import (ConversationUpdateRequest, DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
                      AssistantChatRequest, ChallengeResolveRequest, ChangeRequestCreate, ChangeRequestResolve, ClarificationAnswer,
                      EmployeeCreateRequest, EmployeeUpdateRequest, IntegrationEvent, IntegrationEventRequest, LoginRequest,
                      ProfessionalLinkRequest, ProfileUpdateRequest, ProgressReportRequest, ProgressUpdateRequest, Project, ProjectCreateRequest,
@@ -34,30 +35,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_rate_windows: Dict[str, deque] = defaultdict(deque)
-
-
-def rate_check(key: str, limit: int, seconds: int) -> None:
-    now = time.time()
-    window = _rate_windows[key]
-    while window and window[0] < now - seconds:
-        window.popleft()
-    if len(window) >= limit:
-        raise HTTPException(429, f"Too many requests. Please wait up to {seconds} seconds and try again.")
-
-
-def rate_limit(key: str, limit: int, seconds: int) -> None:
-    rate_check(key, limit, seconds)
-    _rate_windows[key].append(time.time())
+def _actor_of(request: Request) -> str:
+    try:
+        return decode_token(request.headers.get("authorization", "").split(" ", 1)[1])["sub"]
+    except (IndexError, HTTPException):
+        return "SYSTEM"
 
 
 @app.middleware("http")
 async def persist_after_mutation(request: Request, call_next):
     response = await call_next(request)
-    if request.method not in ("GET", "HEAD", "OPTIONS"):
-        STORE.save()     # write-through snapshot of core entities
-        progress_mod.snapshot_all()
+    if request.method not in ("GET", "HEAD", "OPTIONS") and db.org():
+        changed = STORE.save()     # write-through snapshot of core entities
+        if changed or "/projects/" in request.url.path:     # specs, plans and documents move a project's stage without touching the snapshot
+            progress_mod.snapshot_all()
+            if response.status_code < 400:
+                progress_mod.record_transitions(_actor_of(request))
     return response
+
+
+@app.middleware("http")
+async def idempotent_retries(request: Request, call_next):
+    """A POST sent with an Idempotency-Key gives the first answer again on retry instead of repeating its effects."""
+    key = request.headers.get("idempotency-key", "")[:128]
+    if request.method != "POST" or not key or not db.org():
+        return await call_next(request)
+    path = request.url.path
+    seen = db.one("SELECT status, body FROM idempotency_keys WHERE org_id = ? AND key = ? AND path = ?", (db.org(), key, path))
+    if seen:
+        return Response(seen["body"], status_code=seen["status"], media_type="application/json", headers={"Idempotent-Replay": "true"})
+    response = await call_next(request)
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    if response.status_code < 500:      # a server failure is safe to retry for real
+        with db.tx() as c:
+            c.execute("INSERT INTO idempotency_keys (org_id, key, path, status, body, created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(org_id, key, path) DO NOTHING",
+                      (db.org(), key, path, response.status_code, body.decode("utf-8", "replace"), utcnow()))
+    return Response(body, status_code=response.status_code, headers=dict(response.headers))
 
 
 @app.middleware("http")
@@ -72,6 +85,18 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def organization_context(request: Request, call_next):
+    """Registered last so it runs first: everything below sees only this token's organization."""
+    handle = db.set_org(organization_from(request.headers.get("authorization")))
+    try:
+        return await call_next(request)
+    finally:
+        db.reset_org(handle)
+
+
+app.include_router(company_router)    # first, so /projects/overview wins over /projects/{project_id}
+
 coordinator = CoordinationAgent()
 analyst = ProjectAnalysisAgent()
 workforce = WorkforceIntelligenceAgent()
@@ -84,7 +109,7 @@ risk = RiskPredictionAgent()
 # ------------------------------------------------------------------ auth
 @app.get("/api/v1/health")
 def health():
-    return {"status": "ok", "time": utcnow(), "ledger": STORE.ledger.verify()["valid"]}
+    return {"status": "ok", "time": utcnow()}
 
 
 @app.post("/api/v1/auth/login")
@@ -94,22 +119,28 @@ def login(req: LoginRequest, request: Request):
     ip_key = f"login-ip:{request.client.host if request.client else 'unknown'}"
     rate_check(user_key, 10, 300)
     rate_check(ip_key, 30, 300)
-    user = STORE.user(req.username)
-    if user is None or not verify_password(req.password, user):
+    org_id = db.account_org(req.username)
+    if org_id is None:      # no audit row: an unknown name belongs to no company's ledger
         rate_limit(user_key, 10, 300)
         rate_limit(ip_key, 30, 300)
-        STORE.ledger.record(req.username[:64], "LOGIN_FAILED", "AUTH", {})
         raise HTTPException(401, "Invalid username or password")
-    _rate_windows.pop(user_key, None)
-    STORE.ledger.record(user.username, "LOGIN_SUCCESS", "AUTH", {"role": user.role})
-    return {"token": issue_token(user), "user": {"username": user.username, "display_name": user.display_name,
-                                                 "role": user.role, "employee_id": user.employee_id}}
+    with db.as_org(org_id):
+        user = STORE.user(req.username)
+        if user is None or not verify_password(req.password, user):
+            rate_limit(user_key, 10, 300)
+            rate_limit(ip_key, 30, 300)
+            STORE.ledger.record(req.username[:64], "LOGIN_FAILED", "AUTH", {})
+            STORE.save()
+            raise HTTPException(401, "Invalid username or password")
+        _rate_windows.pop(user_key, None)
+        STORE.ledger.record(user.username, "LOGIN_SUCCESS", "AUTH", {"role": user.role})
+        STORE.save()
+        return {"token": issue_token(user), "user": session_user(user)}
 
 
 @app.get("/api/v1/auth/me")
 def me(user: Dict = Depends(current_user)):
-    u = STORE.user(user["sub"])
-    return {"username": u.username, "display_name": u.display_name, "role": u.role, "employee_id": u.employee_id}
+    return session_user(STORE.user(user["sub"]))
 
 
 # ------------------------------------------------------------------ dashboards
@@ -133,6 +164,8 @@ def _summary() -> Dict:
         "recent_audits": STORE.ledger.latest(25),
         "ledger_status": STORE.ledger.verify(),
         "change_requests": services.list_change_requests(),
+        "pending_skill_requests": skillreview.pending_count(),
+        "weights_updated_at": next((e.timestamp for e in reversed(STORE.ledger.all()) if e.action == "UPDATED_SCORING_WEIGHTS"), None),
         "ai": llm.status(),
     }
 
@@ -191,6 +224,8 @@ def reset_state(_: ResetRequest, user: Dict = Depends(require_admin)):
         db.require_development("Resetting to seed data")
     except PermissionError as exc:
         raise HTTPException(403, str(exc))
+    if db.org() != db.DEFAULT_ORG:
+        raise HTTPException(403, "Only the demo organization can be reset")
     saved = db.backup("pre-reset").name
     STORE.reset()
     STORE.ledger.record(user["sub"], "DEMO_STATE_RESET", "ORG", {"backup": saved})
@@ -270,7 +305,8 @@ def update_progress(task_id: str, req: ProgressUpdateRequest, user: Dict = Depen
 
 
 @app.post("/api/v1/tasks/{task_id}/accept")
-def accept_deliverable(task_id: str, user: Dict = Depends(require_admin)):
+def accept_deliverable(task_id: str, user: Dict = Depends(current_user)):
+    progress_mod.assert_can_manage(user, STORE.task(task_id).project_id)
     return monitor.accept_deliverable(task_id, user["sub"])
 
 
@@ -298,15 +334,26 @@ def skill_gaps(_: Dict = Depends(require_admin)):
     return workforce.skill_gaps()
 
 
+def _assert_can_decide(user: Dict, approval_id: str) -> None:
+    if user["role"] == "ADMIN":
+        return
+    approval = next((a for a in STORE.approvals if a.approval_id == approval_id), None)
+    if approval is None:
+        raise HTTPException(403, "Enterprise Admin / Project Manager role required")
+    progress_mod.assert_can_manage(user, STORE.task(approval.task_id).project_id)
+
+
 @app.post("/api/v1/approvals/{approval_id}/approve")
-def approve(approval_id: str, req: DecisionRequest = DecisionRequest(), user: Dict = Depends(require_admin)):
+def approve(approval_id: str, req: DecisionRequest = DecisionRequest(), user: Dict = Depends(current_user)):
+    _assert_can_decide(user, approval_id)
     result = coordinator.decide(approval_id, True, req.comments, user["sub"])
     services.decide_approval_notifications(result)
     return result
 
 
 @app.post("/api/v1/approvals/{approval_id}/reject")
-def reject(approval_id: str, req: DecisionRequest = DecisionRequest(), user: Dict = Depends(require_admin)):
+def reject(approval_id: str, req: DecisionRequest = DecisionRequest(), user: Dict = Depends(current_user)):
+    _assert_can_decide(user, approval_id)
     return coordinator.decide(approval_id, False, req.comments, user["sub"])
 
 
@@ -356,28 +403,28 @@ def ingest_event(req: IntegrationEventRequest, user: Dict = Depends(require_admi
 # ------------------------------------------------------------------ system & notifications
 @app.get("/api/v1/system/status")
 def system_status(_: Dict = Depends(require_admin)):
-    usage = db.one("SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(ok = 0), 0) AS failures FROM ai_usage")
-    return {"ai": llm.status(), "ai_usage": usage, "retrieval": "SQLite FTS5 (BM25), scoped per project; no embeddings",
-            "database": "SQLite", "ledger": STORE.ledger.verify(), "github_token": False,
+    usage = db.one("SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failures FROM ai_usage WHERE org_id = ?", (db.org(),))
+    return {"ai": llm.status(), "ai_usage": usage, "retrieval": f"{'Postgres full-text search' if db.DB_URL else 'SQLite FTS5 (BM25)'}, scoped per project; no embeddings",
+            "database": db.database_label(), "ledger": STORE.ledger.verify(), "github_token": False,
             "oauth": {"linkedin": False, "instagram": False, "x": False}, "upload_limit_mb": documents.MAX_BYTES // (1024 * 1024)}
 
 
 @app.get("/api/v1/notifications")
 def notifications(user: Dict = Depends(current_user)):
-    return db.rows("SELECT * FROM notifications WHERE audience_user = ? OR audience_role = ? ORDER BY created_at DESC, rowid DESC LIMIT 40", (user["sub"], user["role"]))
+    return db.rows("SELECT * FROM notifications WHERE org_id = ? AND (audience_user = ? OR audience_role = ?) ORDER BY created_at DESC, rowid DESC LIMIT 40", (db.org(), user["sub"], user["role"]))
 
 
 @app.post("/api/v1/notifications/read-all")
 def notifications_read_all(user: Dict = Depends(current_user)):
     with db.tx() as c:
-        c.execute("UPDATE notifications SET is_read = 1 WHERE audience_user = ? OR audience_role = ?", (user["sub"], user["role"]))
+        c.execute("UPDATE notifications SET is_read = 1 WHERE org_id = ? AND (audience_user = ? OR audience_role = ?)", (db.org(), user["sub"], user["role"]))
     return {"status": "OK"}
 
 
 @app.post("/api/v1/notifications/{notification_id}/read")
 def notification_read(notification_id: str, user: Dict = Depends(current_user)):
     with db.tx() as c:
-        c.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND (audience_user = ? OR audience_role = ?)", (notification_id, user["sub"], user["role"]))
+        c.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND org_id = ? AND (audience_user = ? OR audience_role = ?)", (notification_id, db.org(), user["sub"], user["role"]))
     return {"status": "OK"}
 
 
@@ -407,7 +454,8 @@ def update_project(project_id: str, req: ProjectUpdateRequest, user: Dict = Depe
 
 
 @app.post("/api/v1/projects/{project_id}/progress-report")
-def report_progress(project_id: str, req: ProgressReportRequest, user: Dict = Depends(require_admin)):
+def report_progress(project_id: str, req: ProgressReportRequest, user: Dict = Depends(current_user)):
+    progress_mod.assert_can_manage(user, project_id)
     return progress_mod.report_progress(project_id, req.reported_pct, req.note, user["sub"])
 
 
@@ -570,7 +618,8 @@ def assign_task(task_id: str, req: TaskAssignRequest, user: Dict = Depends(requi
 
 
 @app.post("/api/v1/tasks/{task_id}/rework")
-def request_rework(task_id: str, req: ReworkRequest, user: Dict = Depends(require_admin)):
+def request_rework(task_id: str, req: ReworkRequest, user: Dict = Depends(current_user)):
+    progress_mod.assert_can_manage(user, STORE.task(task_id).project_id)
     return services.request_rework(task_id, req.reason, user["sub"])
 
 
@@ -668,6 +717,11 @@ def assistant_chat(req: AssistantChatRequest, user: Dict = Depends(current_user)
 @app.get("/api/v1/assistant/conversations")
 def assistant_conversations(user: Dict = Depends(current_user)):
     return assistant.list_conversations(user)
+
+
+@app.patch("/api/v1/assistant/conversations/{conversation_id}")
+def assistant_conversation_update(conversation_id: str, req: ConversationUpdateRequest, user: Dict = Depends(current_user)):
+    return assistant.update_conversation(conversation_id, user, req.title, req.status)
 
 
 @app.get("/api/v1/assistant/conversations/{conversation_id}")

@@ -12,7 +12,7 @@ const STAGES = [
 ];
 
 /** Ongoing-projects donut: stage segments, with the allocated team rotating in 3D in the centre. */
-export function ProjectDonut({ tasks, employees, title = "Ongoing Projects" }: { tasks: Task[]; employees: EmployeeScores[]; title?: string }) {
+export function ProjectDonut({ tasks, employees, title }: { tasks: Task[]; employees: EmployeeScores[]; title?: string }) {
   const [stage, setStage] = useState<string | null>(null);
   const [front, setFront] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -24,7 +24,7 @@ export function ProjectDonut({ tasks, employees, title = "Ongoing Projects" }: {
     const pool = stage ? tasks.filter((t) => STAGES.find((s) => s.key === stage)!.statuses.includes(t.status)) : tasks;
     const ids = [...new Set(pool.map((t) => t.assigned_to).filter(Boolean))] as string[];
     const list = ids.map((id) => employees.find((e) => e.employee_id === id)).filter(Boolean) as EmployeeScores[];
-    return list.length ? list : stage ? [] : employees.filter((e) => e.status !== "On Leave").slice(0, 8);
+    return list;
   }, [stage, tasks, employees]);
 
   useEffect(() => setFront(0), [stage]);
@@ -41,9 +41,9 @@ export function ProjectDonut({ tasks, employees, title = "Ongoing Projects" }: {
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold text-slate-800">{title}</h2>
-        {stage && <button onClick={() => setStage(null)} className="rounded-full border border-slate-200 px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-50">Show all</button>}
+      <div className="mb-3 flex min-h-[26px] items-center justify-between">
+        {title && <h2 className="text-[15px] font-semibold text-slate-800">{title}</h2>}
+        {stage && <button onClick={() => setStage(null)} className="ml-auto rounded-full border border-slate-200 px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-50">Show all</button>}
       </div>
       <div className="relative mx-auto h-[250px] w-full max-w-[280px]" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
         <ResponsiveContainer width="100%" height="100%">

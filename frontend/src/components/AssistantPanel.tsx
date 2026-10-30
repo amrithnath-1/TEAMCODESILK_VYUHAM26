@@ -27,7 +27,7 @@ const STATE_LABEL: Record<string, { label: string; cls: string }> = {
   error: { label: "Could not complete", cls: "bg-rose-100 text-rose-700" },
 };
 
-const ADMIN_PROMPTS = ["Analyze the documents and prepare the execution plan", "How is this project progressing?", "Who should do TSK-104?", "Are there any blockers?", "Is the workload fair right now?", "Vikram is on sick leave for 3 days"];
+const ADMIN_PROMPTS = ["Analyze the documents and prepare the execution plan", "How is this project progressing?", "What did the team decide in the last meeting?", "Are there any blockers?", "Is the workload fair right now?", "Who has free capacity?"];
 const STAFF_PROMPTS = ["What should I prioritize today?", "Show my tasks", "Why was I selected for my task?", "Who has free capacity this week?"];
 
 export function AssistantPanel({ isAdmin, projects, defaultProject, reload, seed, onSeedUsed, onNav, height = 420 }: {
@@ -142,7 +142,8 @@ export function AssistantPanel({ isAdmin, projects, defaultProject, reload, seed
             {conversations.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
           </select>
         )}
-        <PillButton onClick={() => { setConversation(null); setMsgs([]); }}><Plus size={13} />New</PillButton>
+        {conversation && <PillButton onClick={() => api(`/assistant/conversations/${conversation}`, { method: "PATCH", body: { status: "archived" } }).then(() => { setConversation(null); setMsgs([]); loadList(); }).catch(() => {})}>Archive</PillButton>}
+        <PillButton onClick={() => { setConversation(null); setMsgs([]); }}><Plus size={13} />New chat</PillButton>
       </header>
 
       {offline && (

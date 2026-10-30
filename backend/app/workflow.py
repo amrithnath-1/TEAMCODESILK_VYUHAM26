@@ -20,14 +20,15 @@ from .state import STORE
 ANALYSIS_KEYS = ["objectives", "business_requirements", "functional_requirements", "non_functional_requirements", "deliverables",
                  "technical_requirements", "constraints", "deadlines", "budget", "required_skills", "risks"]
 
-_ITEM = {"type": "object", "additionalProperties": False, "required": ["text", "document", "location"],
-         "properties": {"text": {"type": "string"}, "document": {"type": "string"}, "location": {"type": "string"}}}
+_ITEM = {"type": "object", "additionalProperties": False, "required": ["section", "text", "document", "location"],
+         "properties": {"section": {"type": "string", "enum": ANALYSIS_KEYS}, "text": {"type": "string"}, "document": {"type": "string"}, "location": {"type": "string"}}}
 ANALYSIS_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["summary", *ANALYSIS_KEYS, "contradictions", "missing_information"],
+    "required": ["summary", "items", "contradictions", "missing_information"],
     "properties": {
         "summary": {"type": "string"},
-        **{k: {"type": "array", "items": _ITEM} for k in ANALYSIS_KEYS},
+        # One flat list. Eleven separate lists of objects compile to a grammar larger than the API accepts.
+        "items": {"type": "array", "items": _ITEM},
         "contradictions": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["topic", "detail"],
                                                       "properties": {"topic": {"type": "string"}, "detail": {"type": "string"}}}},
         "missing_information": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["question", "why", "options"],
@@ -152,6 +153,14 @@ def _find_conflicts(sentences: List[Dict]) -> List[Dict]:
     return conflicts
 
 
+def _regroup(raw: Dict) -> Dict:
+    """Back to one list per section, the shape the rest of the app stores and shows."""
+    sections: Dict = {k: [] for k in ANALYSIS_KEYS}
+    for item in raw["items"]:
+        sections[item["section"]].append({k: item[k] for k in ("text", "document", "location")})
+    return {"summary": raw["summary"], **sections, "contradictions": raw["contradictions"], "missing_information": raw["missing_information"]}
+
+
 def analyze(project_id: str, actor: str) -> Dict:
     project = STORE.project(project_id)
     chunks, truncated = documents.project_text(project_id)
@@ -160,7 +169,7 @@ def analyze(project_id: str, actor: str) -> Dict:
     if llm.is_configured():
         prompt = f"Project: {project.name}\nStated objective: {project.business_objective or 'not stated'}\n\n{documents.as_untrusted_block(chunks)}\n\nAnalyse these documents together."
         try:
-            analysis = llm.structured("project_analysis", system=SYSTEM_RULES, prompt=prompt, schema=ANALYSIS_SCHEMA)
+            analysis = _regroup(llm.structured("project_analysis", system=SYSTEM_RULES, prompt=prompt, schema=ANALYSIS_SCHEMA))
             source = f"claude:{llm.model()}"
         except llm.LLMUnavailable as exc:
             raise HTTPException(503, str(exc))
@@ -173,7 +182,7 @@ def analyze(project_id: str, actor: str) -> Dict:
                   "ON CONFLICT(project_id) DO UPDATE SET analysis_json = excluded.analysis_json, source = excluded.source, status = 'draft', "
                   "approved_by = NULL, approved_at = NULL, updated_at = excluded.updated_at", (project_id, db.dumps(analysis), source, "draft", now))
         for item in analysis.get("missing_information", []):
-            c.execute("INSERT OR IGNORE INTO clarifications (id, project_id, question, why, options_json, status, created_at) VALUES (?,?,?,?,?,?,?)",
+            c.execute("INSERT INTO clarifications (id, project_id, question, why, options_json, status, created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id, question) DO NOTHING",
                       (db.new_id("CLR"), project_id, item["question"], item.get("why"), db.dumps(item.get("options", [])), "open", now))
     with STORE.lock:
         STORE.ledger.record(actor, "PROJECT_DOCUMENTS_ANALYZED", project_id, {"source": source, "questions": len(analysis.get("missing_information", []))})
