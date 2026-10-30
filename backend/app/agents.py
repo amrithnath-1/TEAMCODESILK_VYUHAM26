@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from . import engine
 from .audit import utcnow
-from .models import AgentDecision, ApprovalRecord, Deliverable, Task, TaskAssignment
+from .models import AgentDecision, ApprovalRecord, Deliverable, Employee, Task, TaskAssignment
 from .state import STORE
 
 PRIORITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -552,8 +552,8 @@ class CoordinationAgent:
 
     # ------------------------------------------------------------ chat router
     def chat(self, query: str, user: Dict) -> Dict:
+        """Read-only fallback for the offline assistant. Changes go through assistant.propose and its approval card."""
         q = query.lower().strip()
-        is_admin = user["role"] == "ADMIN"
         trace: List[str] = ["Agent 7: intent routing"]
         emp = self._find_employee(q)
         task = self._find_task(q)
@@ -561,18 +561,27 @@ class CoordinationAgent:
         def reply(text: str, data: Optional[Dict] = None) -> Dict:
             return {"agent": self.name, "response": text, "data": data or {}, "trace": trace}
 
+        def explain(t: Task) -> Dict:
+            asg = next((a for a in reversed(STORE.assignments) if a.task_id == t.id), None)
+            trace.append("Agent 3: explanation lookup")
+            return reply(asg.explanation_rationale if asg else f"{t.id} has not been allocated yet.")
+
+        def scores(e: Employee) -> Dict:
+            s = engine.compute_6_scores(e)
+            trace.append("Agent 5: 6-score evaluation")
+            return reply(f"{e.name}: {s['level']}. Skill {s['skill_score']}, Performance {s['performance_score'] if s['performance_score'] is not None else 'withheld (insufficient evidence)'}, "
+                         f"Availability {s['availability_score']}, Workload {s['workload_score']}%, Collaboration {s['collaboration_score']}.", s)
+
+        asks_why = any(k in q for k in ("why", "explain"))
+        asks_scores = any(k in q for k in ("score", "perform", "how is", "profile", "level"))
+        if user["role"] != "ADMIN":   # staff see their own records; team-wide data stays behind the admin tools
+            if task and asks_why and task.assigned_to == user.get("emp"):
+                return explain(task)
+            if emp and asks_scores:
+                return scores(emp) if user.get("emp") == emp.id else reply("Staff can only view their own evaluation.")
+            return reply("I can help with your own tasks, scores and requests. Team-wide workload, risks, rankings and approvals need an administrator.")
         if any(k in q for k in ("leave", "sick", "unavailable", "out of office", "absent", "emergency")):
-            if not is_admin:
-                return reply("Only a Project Manager / Admin can report availability disruptions. Please contact your manager.")
-            target = emp or STORE.employee("EMP-01")
-            trace += [f"Entity: {target.name} ({target.id})", "Agent 6: disruption + DAG impact", "Engine: rank alternates", "HITL: approvals queued"]
-            days = int(m.group(1)) if (m := re.search(r"(\d+)\s*day", q)) else 3
-            res = RiskPredictionAgent().disruption(target.id, "On Leave", days, "Reported via AI Coordinator chat", user["sub"])
-            n = len(res["proposals_created"])
-            lines = [f"• {p['task_id']} → {p['recommended_new_owner_name'] or 'ESCALATE'} ({p['risk_level']} risk)" for p in res["proposals_created"]]
-            return reply(f"I marked {target.name} on leave for {days} day(s) and analysed downstream DAG dependencies. "
-                         f"{n} reallocation proposal(s) are waiting in the HITL Approval Queue." + ("\n" + "\n".join(lines) if lines else
-                                                                                                 " They had no open tasks, so nothing needs to move."), res)
+            return reply("To report someone as unavailable, tell me who and for how long, for example “Vikram is on leave for 3 days”. You will get a card to approve.")
         if "what if" in q or "what-if" in q:
             if task and emp:
                 trace += ["Agent 3: counterfactual simulation"]
@@ -589,12 +598,7 @@ class CoordinationAgent:
             return reply(f"For {task.id} ({task.title}) the best candidate is {top['employee_name']}.\n" + "\n".join(lines),
                          {"shortlist": cands[:4]})
         if any(k in q for k in ("allocate", "plan the", "run allocation")):
-            if not is_admin:
-                return reply("Allocation runs require the Admin / Project Manager role.")
-            trace += ["Agent 3: allocate_all", "Engine: DAG topological order", "HITL: gate critical tasks"]
-            r = TaskAllocationAgent().allocate_all(user["sub"])
-            return reply(f"Allocated {r['allocated_count']} task(s). Workload Gini {r['gini_before']} → {r['gini_after']}. "
-                         f"Critical or >85% load assignments are waiting for approval.", r)
+            return reply("To allocate tasks, say “run allocation”. You will get a card to approve first.")
         if any(k in q for k in ("fair", "gini", "overload", "workload", "burnout", "balance")):
             trace += ["Engine: utilisation + Gini"]
             utils = sorted(((e.name, engine.util_pct(e)) for e in STORE.employees if e.status != "On Leave"), key=lambda x: -x[1])
@@ -616,17 +620,10 @@ class CoordinationAgent:
         if any(k in q for k in ("pending", "approval", "queue")):
             pend = [a for a in STORE.approvals if a.status == "PENDING"]
             return reply(f"{len(pend)} approval(s) pending: " + (", ".join(f"{a.approval_id} ({a.task_id})" for a in pend) or "none") + ".")
-        if task and any(k in q for k in ("why", "explain")):
-            asg = next((a for a in reversed(STORE.assignments) if a.task_id == task.id), None)
-            trace += ["Agent 3: explanation lookup"]
-            return reply(asg.explanation_rationale if asg else f"{task.id} has not been allocated yet.")
-        if emp and any(k in q for k in ("score", "perform", "how is", "profile", "level")):
-            if not is_admin and user.get("emp") != emp.id:
-                return reply("Staff can only view their own evaluation.")
-            s = engine.compute_6_scores(emp)
-            trace += ["Agent 5: 6-score evaluation"]
-            return reply(f"{emp.name}: {s['level']}. Skill {s['skill_score']}, Performance {s['performance_score'] if s['performance_score'] is not None else 'withheld (insufficient evidence)'}, "
-                         f"Availability {s['availability_score']}, Workload {s['workload_score']}%, Collaboration {s['collaboration_score']}.", s)
+        if task and asks_why:
+            return explain(task)
+        if emp and asks_scores:
+            return scores(emp)
         if any(k in q for k in ("free", "available", "capacity", "bandwidth")) or not q:
             trace += ["Agent 2: capacity scan"]
             evals = [engine.compute_6_scores(e) for e in STORE.employees]

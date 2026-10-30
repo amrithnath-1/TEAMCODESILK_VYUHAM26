@@ -18,8 +18,14 @@ TOKEN_TTL_SECONDS = 8 * 3600
 _token_secret = None
 
 
+def check_config() -> None:
+    """Outside development the signing key must not live in the database it protects."""
+    if db.environment() != "development" and len(os.environ.get("AF07_SECRET_KEY", "")) < 32:
+        raise RuntimeError("AF07_SECRET_KEY must be set to at least 32 characters outside development")
+
+
 def _secret() -> bytes:
-    """AF07_SECRET_KEY if set, otherwise a random key generated once and kept in the database."""
+    """AF07_SECRET_KEY if set, otherwise (development only) a random key kept in the database."""
     global _token_secret
     if _token_secret is None:
         env = os.environ.get("AF07_SECRET_KEY", "")
@@ -69,7 +75,7 @@ def decode_token(token: str) -> Dict:
     except ValueError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Malformed token")
     expected = _b64(hmac.new(_secret(), payload.encode(), hashlib.sha256).digest())
-    if not hmac.compare_digest(sig, expected):
+    if not hmac.compare_digest(sig.encode(), expected.encode()):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token signature")
     claims = json.loads(_unb64(payload))
     if claims["exp"] < time.time():
@@ -80,7 +86,12 @@ def decode_token(token: str) -> Dict:
 def current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> Dict:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
-    return decode_token(creds.credentials)
+    claims = decode_token(creds.credentials)
+    from .state import STORE    # imported here because state -> seed -> auth
+    account = STORE.user(claims["sub"])
+    if account is None:         # deactivated or removed since the token was issued
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This account is no longer active")
+    return {**claims, "role": account.role, "emp": account.employee_id}
 
 
 def require_admin(user: Dict = Depends(current_user)) -> Dict:

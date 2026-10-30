@@ -64,9 +64,11 @@ Without a key, the app runs in **offline mode**: chat, analysis, plans and resum
 
 ### Data
 
-Data is stored in `backend/data/` (not committed). The **Reset all demo data** button in Settings restores the seeded state. Sample files to try are in `docs/samples/`.
+Data is stored in `backend/data/` (not committed). The **Reset all demo data** button in Settings saves a backup to `backend/data/backups/`, then restores the seeded state. Pending migrations also take a backup first. Backups contain password hashes, so treat them as confidential.
 
-## Demo accounts (seeded, demo only)
+Set `VYUHAM_ENV` to `development`, `staging` or `production` (default `development`). Outside development, demo data is never seeded, reset is refused, `AF07_SECRET_KEY` is required, and the API docs are off. Sample files to try are in `docs/samples/`.
+
+## Demo accounts (seeded in development only)
 
 | Portal | Username | Password |
 |---|---|---|

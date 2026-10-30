@@ -1,6 +1,7 @@
 """SQLite persistence: versioned migrations, per-thread connections, small helpers."""
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -13,7 +14,23 @@ from .audit import utcnow
 DATA_DIR = Path(os.environ.get("AF07_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "vyuham.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
+BACKUP_DIR = DATA_DIR / "backups"
 ORG_ID = "ORG-1"
+ENVIRONMENTS = ("development", "staging", "production")
+
+
+def environment() -> str:
+    env = os.environ.get("VYUHAM_ENV", "development").strip().lower()
+    if env not in ENVIRONMENTS:
+        raise RuntimeError(f"VYUHAM_ENV must be one of {', '.join(ENVIRONMENTS)}")
+    return env
+
+
+def require_development(action: str) -> None:
+    """Blocks anything that deletes data or seeds demo accounts outside development."""
+    if environment() != "development":
+        raise PermissionError(f"{action} is only allowed in development (VYUHAM_ENV is {environment()})")
+
 
 MIGRATIONS: List[str] = [
     # 001: core snapshot + document intelligence
@@ -125,19 +142,45 @@ def init() -> None:
     with _init_lock:
         if _initialized:
             return
+        environment()
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         conn = _connect()
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
-        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
-        for version, script in enumerate(MIGRATIONS, start=1):
-            if version in applied:
-                continue
-            conn.executescript(f"BEGIN;\n{script}\nCOMMIT;")
-            conn.execute("INSERT INTO schema_migrations VALUES (?, ?)", (version, utcnow()))
-            conn.commit()
-        conn.close()
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+            applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+            pending = [(v, s) for v, s in enumerate(MIGRATIONS, start=1) if v not in applied]
+            if applied and pending:     # a new database has nothing to protect
+                backup("pre-migration")
+            for version, script in pending:
+                # The version row commits with the migration, so a crash cannot leave them out of step.
+                conn.executescript(f"BEGIN;\n{script}\nINSERT INTO schema_migrations VALUES ({version}, '{utcnow()}');\nCOMMIT;")
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         _initialized = True
+
+
+def backup(reason: str) -> Path:
+    """Copies the database and uploads to a new folder. Safe while the server runs; never overwrites."""
+    stamp = utcnow().replace(":", "").replace("-", "")
+    dest = BACKUP_DIR / f"{stamp}-{uuid.uuid4().hex[:6]}-{reason}"
+    dest.mkdir(parents=True)
+    source, target = sqlite3.connect(DB_PATH), sqlite3.connect(dest / "vyuham.db")
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    if UPLOAD_DIR.exists():
+        shutil.copytree(UPLOAD_DIR, dest / "uploads")
+    return dest
+
+
+def has_business_data() -> bool:
+    return any(one(f"SELECT 1 AS found FROM {table} LIMIT 1") for table in BUSINESS_TABLES)
 
 
 @contextmanager

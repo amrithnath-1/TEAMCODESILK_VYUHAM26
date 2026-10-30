@@ -273,8 +273,8 @@ class DisputeResolveRequest(BaseModel):
     note: str = Field(default="", max_length=500)
 
 
-class ChatQueryRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=1000)
+class ResetRequest(BaseModel):
+    confirm: Literal["RESET"]
 
 
 class WhatIfRequest(BaseModel):

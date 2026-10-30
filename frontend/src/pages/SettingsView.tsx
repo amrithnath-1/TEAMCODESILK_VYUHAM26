@@ -45,7 +45,7 @@ export function SettingsView({ summary, reload, toast, onReset }: { summary: Sum
       <Card title="Data">
         <p className="text-[12px] text-slate-500">Data is stored in SQLite and survives restarts. Audit ledger: {summary.ledger_status.valid ? "hash chain verified" : "chain broken"}, {summary.ledger_status.entries} entries.</p>
         <PillButton variant="danger" className="mt-3" onClick={onReset}>Reset all demo data</PillButton>
-        <p className="mt-2 text-[11px] text-slate-400">This deletes uploaded documents, plans, conversations and changes, then restores the seeded data.</p>
+        <p className="mt-2 text-[11px] text-slate-400">This deletes uploaded documents, plans, conversations and changes, then restores the seeded data. A backup is saved to data/backups first. Development only.</p>
       </Card>
     </div>
   );

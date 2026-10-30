@@ -18,6 +18,9 @@ class Store:
         self.lock = threading.RLock()
         self.ledger = AuditLedger()
         if not self.load():
+            if db.has_business_data():   # a missing snapshot is damage to investigate, not a fresh install
+                raise RuntimeError("core_state is missing but the database holds data. Restore a backup from "
+                                   "data/backups; refusing to overwrite it with seed data.")
             self.reset()
 
     # Core entities are written through to SQLite as one transactional JSON snapshot after every
@@ -65,6 +68,7 @@ class Store:
         return p
 
     def reset(self) -> None:
+        db.require_development("Resetting to seed data")
         with self.lock:
             db.clear_business_data()
             self.weights = WeightConfig()

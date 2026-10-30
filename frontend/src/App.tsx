@@ -104,10 +104,10 @@ export default function App() {
   const first = user.display_name.split(" (")[0];
   const unread = notes.filter((n) => !n.is_read).length;
   const reset = async () => {
-    if (!confirm("Delete all documents, plans, conversations and changes, and restore the seeded demo data?")) return;
+    if (!confirm("Delete all documents, plans, conversations and changes, and restore the seeded demo data? A backup is saved first.")) return;
     try {
-      await api("/reset", { body: {} });
-      notify("Demo data restored.");
+      await api("/reset", { body: { confirm: "RESET" } });
+      notify("Demo data restored. A backup of the previous data was saved.");
       reload();
     } catch (e: any) { notify(e.message, "err"); }
   };

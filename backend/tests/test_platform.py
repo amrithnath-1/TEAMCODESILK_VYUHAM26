@@ -145,7 +145,3 @@ def test_staff_progress_only_on_own_task(admin, staff):
     assert client.post("/api/v1/tasks/TSK-103/progress", headers=staff, json={"progress_pct": 40}).status_code == 403
 
 
-def test_chat_disruption_routes_to_hitl(admin):
-    client.post("/api/v1/tasks/allocate-all", headers=admin)
-    r = client.post("/api/v1/chat/coordinator", headers=admin, json={"query": "Vikram is on sick leave for 2 days"}).json()
-    assert "HITL" in r["response"] and r["data"]["proposals_created"]

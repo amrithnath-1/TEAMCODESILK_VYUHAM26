@@ -3,12 +3,6 @@ import { FormEvent, useState } from "react";
 import { api, setToken } from "../api";
 import type { SessionUser } from "../types";
 
-// Seeded hackathon demo accounts (see backend/app/seed.py and README).
-const DEMO = {
-  admin: { username: "admin", password: "Admin@2026", label: "Enterprise Admin / PM", hint: "Full console: allocation, approvals, audit" },
-  staff: { username: "sneha", password: "Staff@2026", label: "Staff · Sneha Patel", hint: "Own tasks, 6 scores, evidence & disputes" },
-};
-
 export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   const [mode, setMode] = useState<"admin" | "staff">("admin");
   const [username, setUsername] = useState("");
@@ -31,11 +25,6 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
     } finally {
       setBusy(false);
     }
-  };
-
-  const fill = () => {
-    setUsername(DEMO[mode].username);
-    setPassword(DEMO[mode].password);
   };
 
   return (
@@ -76,7 +65,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 focus-within:border-brand-500">
             <User size={16} className="text-slate-400" />
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required
-              placeholder={mode === "admin" ? "admin" : "e.g. sneha, vikram, kabir"} className="w-full text-sm outline-none" />
+              className="w-full text-sm outline-none" />
           </div>
           <label className="mt-4 block text-[13px] font-medium text-slate-600">Password</label>
           <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 focus-within:border-brand-500">
@@ -88,11 +77,6 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
 
           <button type="submit" disabled={busy} className="mt-6 w-full rounded-xl bg-brand-500 py-3 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-60">
             {busy ? "Signing in…" : `Sign in to ${mode === "admin" ? "Admin console" : "Staff portal"}`}
-          </button>
-
-          <button type="button" onClick={fill} className="mt-4 w-full rounded-xl border border-dashed border-slate-300 p-3 text-left text-[12px] text-slate-500 hover:bg-slate-50">
-            <span className="font-medium text-slate-700">Demo account: {DEMO[mode].label}</span> — click to fill. {DEMO[mode].hint}.
-            {mode === "staff" && " Every employee can sign in with their first name."}
           </button>
         </form>
       </div>

@@ -15,16 +15,18 @@ from . import assistant, db, documents, engine, llm, progress as progress_mod, s
 from .agents import (CoordinationAgent, PerformanceEvaluationAgent, ProgressMonitoringAgent, ProjectAnalysisAgent,
                      RiskPredictionAgent, TaskAllocationAgent, WorkforceIntelligenceAgent)
 from .audit import utcnow
-from .auth import assert_self_or_admin, current_user, issue_token, require_admin, verify_password
-from .models import (ChatQueryRequest, DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
+from .auth import assert_self_or_admin, check_config, current_user, issue_token, require_admin, verify_password
+from .models import (DecisionRequest, DisputeRequest, DisputeResolveRequest, DisruptionRequest,
                      AssistantChatRequest, ChallengeResolveRequest, ChangeRequestCreate, ChangeRequestResolve, ClarificationAnswer,
                      EmployeeCreateRequest, EmployeeUpdateRequest, IntegrationEvent, IntegrationEventRequest, LoginRequest,
                      ProfessionalLinkRequest, ProfileUpdateRequest, ProgressReportRequest, ProgressUpdateRequest, Project, ProjectCreateRequest,
-                     ProjectDraftRequest, ProjectUpdateRequest, ReworkRequest, SkillChallengeRequest, SpecUpdateRequest, Task, TaskAssignRequest,
+                     ProjectDraftRequest, ProjectUpdateRequest, ResetRequest, ReworkRequest, SkillChallengeRequest, SpecUpdateRequest, Task, TaskAssignRequest,
                      TaskCreateRequest, TaskUpdateRequest, WeightConfig, WhatIfRequest)
 from .state import STORE
 
-app = FastAPI(title="AF-07 Enterprise Workforce Intelligence & Task Allocation API", version="1.0.0")
+check_config()
+_api_docs = {} if db.environment() == "development" else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title="AF-07 Enterprise Workforce Intelligence & Task Allocation API", version="1.0.0", **_api_docs)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("AF07_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
@@ -35,14 +37,18 @@ app.add_middleware(
 _rate_windows: Dict[str, deque] = defaultdict(deque)
 
 
-def rate_limit(key: str, limit: int, seconds: int) -> None:
+def rate_check(key: str, limit: int, seconds: int) -> None:
     now = time.time()
     window = _rate_windows[key]
     while window and window[0] < now - seconds:
         window.popleft()
     if len(window) >= limit:
         raise HTTPException(429, f"Too many requests. Please wait up to {seconds} seconds and try again.")
-    window.append(now)
+
+
+def rate_limit(key: str, limit: int, seconds: int) -> None:
+    rate_check(key, limit, seconds)
+    _rate_windows[key].append(time.time())
 
 
 @app.middleware("http")
@@ -51,6 +57,18 @@ async def persist_after_mutation(request: Request, call_next):
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         STORE.save()     # write-through snapshot of core entities
         progress_mod.snapshot_all()
+    return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api/"):     # the /docs page loads its assets from a CDN
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -70,12 +88,19 @@ def health():
 
 
 @app.post("/api/v1/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    # Checked before the password, so a locked-out guess cannot succeed. Only failures count.
+    user_key = f"login-user:{req.username.lower().strip()[:64]}"
+    ip_key = f"login-ip:{request.client.host if request.client else 'unknown'}"
+    rate_check(user_key, 10, 300)
+    rate_check(ip_key, 30, 300)
     user = STORE.user(req.username)
     if user is None or not verify_password(req.password, user):
-        rate_limit(f"login-fail:{req.username.lower()[:64]}", 10, 300)
+        rate_limit(user_key, 10, 300)
+        rate_limit(ip_key, 30, 300)
         STORE.ledger.record(req.username[:64], "LOGIN_FAILED", "AUTH", {})
         raise HTTPException(401, "Invalid username or password")
+    _rate_windows.pop(user_key, None)
     STORE.ledger.record(user.username, "LOGIN_SUCCESS", "AUTH", {"role": user.role})
     return {"token": issue_token(user), "user": {"username": user.username, "display_name": user.display_name,
                                                  "role": user.role, "employee_id": user.employee_id}}
@@ -161,10 +186,15 @@ def update_weights(w: WeightConfig, user: Dict = Depends(require_admin)):
 
 
 @app.post("/api/v1/reset")
-def reset_state(user: Dict = Depends(require_admin)):
+def reset_state(_: ResetRequest, user: Dict = Depends(require_admin)):
+    try:
+        db.require_development("Resetting to seed data")
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    saved = db.backup("pre-reset").name
     STORE.reset()
-    STORE.ledger.record(user["sub"], "DEMO_STATE_RESET", "ORG", {})
-    return {"status": "RESET_COMPLETE"}
+    STORE.ledger.record(user["sub"], "DEMO_STATE_RESET", "ORG", {"backup": saved})
+    return {"status": "RESET_COMPLETE", "backup": saved}
 
 
 @app.get("/api/v1/audit")
@@ -321,12 +351,6 @@ def ingest_event(req: IntegrationEventRequest, user: Dict = Depends(require_admi
                             {"event": ev.id, "key": key, "before": before,
                              "after": {"collaboration_review_score": emp.collaboration_review_score, "meeting_hrs": emp.meeting_hrs}})
         return {"status": "INGESTED", "event": ev.model_dump()}
-
-
-# ------------------------------------------------------------------ AI coordinator
-@app.post("/api/v1/chat/coordinator")
-def coordinator_chat(req: ChatQueryRequest, user: Dict = Depends(current_user)):
-    return coordinator.chat(req.query, user)
 
 
 # ------------------------------------------------------------------ system & notifications
