@@ -235,7 +235,9 @@ def join(code: str, name: str, email: str, password: str, department: str, desig
     with db.as_org(row["org_id"]):
         with STORE.lock:
             number = max([int(e.id.split("-")[1]) for e in STORE.employees] + [STORE.counters.get("EMP", 0)]) + 1
-            employee = Employee(id=f"EMP-{number:02d}", name=name.strip(), email=username, department=department.strip() or "General", designation=designation.strip() or "Team member",
+            # Only an invitation tied to this exact email can claim an existing record, so nobody can take over someone else's.
+            existing = next((e for e in STORE.employees if row["email"] and e.email.lower() == username and not any(u.employee_id == e.id for u in STORE.users)), None)
+            employee = existing or Employee(id=f"EMP-{number:02d}", name=name.strip(), email=username, department=department.strip() or "General", designation=designation.strip() or "Team member",
                                 manager="", team_role_id="", years_exp=0, skills=[], committed_hrs=0, meeting_hrs=0, delivery_completion_rate=0, work_quality_acceptance_rate=0,
                                 deadline_reliability_rate=0, collaboration_review_score=0, learning_improvement_score=0, preferred_tasks=[], learning_goals=[], sufficient_evidence=False,
                                 availability=AvailabilitySchedule(meeting_hrs_week=0))
@@ -244,7 +246,8 @@ def join(code: str, name: str, email: str, password: str, department: str, desig
                 changed = c.execute("UPDATE invitations SET used_by = ?, used_at = ? WHERE id = ? AND used_at IS NULL", (username, utcnow(), row["id"]))
                 if changed.rowcount != 1:      # lost a race with another use of the same code
                     raise invalid
-            STORE.employees.append(employee)
+            if not existing:
+                STORE.employees.append(employee)
             STORE.users.append(user)
             db.add_account(username)
             STORE.ledger.record(username, "EMPLOYEE_JOINED", employee.id, {"invitation": row["id"], "role": row["role"]})

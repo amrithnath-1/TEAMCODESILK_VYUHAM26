@@ -1,11 +1,12 @@
 """Routes for companies, roles, skills review, project overview, team rooms, budgets and the optimizer."""
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from . import budget, db, documents, org, progress, rooms, skillreview
+from . import budget, db, documents, employee_import, org, progress, rooms, skillreview
 from .auth import assert_self_or_admin, current_user, require_admin
 from .ratelimit import rate_limit
 from .state import STORE
@@ -197,6 +198,32 @@ def change_role(username: str, req: RoleChangeRequest, user: Dict = Depends(requ
 @router.post("/projects/{project_id}/managers")
 def project_manager(project_id: str, req: ProjectManagerRequest, user: Dict = Depends(require_admin)):
     return org.set_project_manager(project_id, req.username, req.add, user["sub"])
+
+
+# ------------------------------------------------------------------ bulk employee import
+class ImportRecords(BaseModel):
+    records: List[employee_import.ImportRecord] = Field(max_length=employee_import.MAX_RECORDS)
+
+
+class ImportConfirm(ImportRecords):
+    confirm: Literal[True]
+
+
+@router.post("/org/employees/import/analyze")
+async def analyze_employee_import(files: List[UploadFile] = File(...), user: Dict = Depends(require_admin)):
+    rate_limit(f"employee-import:{user['sub']}", 10, 60)
+    read = [(f.filename or "", await f.read(documents.MAX_BYTES + 1)) for f in files[:employee_import.MAX_FILES + 1]]
+    return await run_in_threadpool(employee_import.analyze, read, user["sub"])      # Claude can take a minute; other requests must keep moving
+
+
+@router.post("/org/employees/import/validate")
+def validate_employee_import(req: ImportRecords, _: Dict = Depends(require_admin)):
+    return employee_import.validate(req.records)
+
+
+@router.post("/org/employees/import/confirm")
+def confirm_employee_import(req: ImportConfirm, user: Dict = Depends(require_admin)):
+    return employee_import.confirm(req.records, user["sub"])
 
 
 # ------------------------------------------------------------------ skills

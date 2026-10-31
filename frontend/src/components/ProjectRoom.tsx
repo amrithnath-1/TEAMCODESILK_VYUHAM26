@@ -1,6 +1,7 @@
 import { CheckCircle2, Download, FileUp, Search, Send, Trash2 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, apiDownload, apiUpload } from "../api";
+import { AI_STEPS, AIProgress, useSingleRun } from "./AIProgress";
 import { Card, Empty, PillButton, StatusPill } from "./ui";
 import type { RoomMessage, RoomView } from "../types";
 
@@ -49,13 +50,17 @@ export function ProjectRoom({ id, canManage, username, toast }: { id: string; ca
     form.append("file", file);
     try { await apiUpload(`/projects/${id}/room/files`, form); load(); } catch (error: any) { toast(error.message, "err"); } finally { setUploading(false); }
   };
-  const addMinutes = async (e: FormEvent) => {
+  const { busy: job, run: once } = useSingleRun();
+  const addMinutes = (e: FormEvent) => {
     e.preventDefault();
-    try {
-      await api(`/projects/${id}/room/minutes`, { body: { title: minutes.title || "Meeting minutes", text: minutes.text } });
-      setMinutes({ title: "", text: "" });
-      load();
-    } catch (error: any) { toast(error.message, "err"); }
+    once("minutes", async () => {
+      try {
+        await api(`/projects/${id}/room/minutes`, { body: { title: minutes.title || "Meeting minutes", text: minutes.text } });
+        setMinutes({ title: "", text: "" });
+        toast("Minutes added. Review them before approving.");
+        load();
+      } catch (error: any) { toast(error.message, "err"); }
+    });
   };
   const approve = async (minutesId: string) => {
     try { await api(`/projects/${id}/room/minutes/${minutesId}/approve`, { body: {} }); toast("Minutes approved. Decisions and action items are saved."); load(); } catch (error: any) { toast(error.message, "err"); }
@@ -94,7 +99,8 @@ export function ProjectRoom({ id, canManage, username, toast }: { id: string; ca
           <form onSubmit={addMinutes} className="space-y-2">
             <input aria-label="Minutes title" value={minutes.title} onChange={(e) => setMinutes({ ...minutes, title: e.target.value })} placeholder="Title" className="field !mt-0" />
             <textarea aria-label="Minutes text" rows={4} value={minutes.text} onChange={(e) => setMinutes({ ...minutes, text: e.target.value })} placeholder={"Paste the minutes. Lines like Date:, Attendees:, Decision:, Action:, Risk: are recognized."} className="field !mt-0" />
-            <PillButton type="submit" variant="primary" disabled={minutes.text.trim().length < 10}>Add minutes</PillButton>
+            {job === "minutes" && <AIProgress steps={AI_STEPS.minutes} compact />}
+            <PillButton type="submit" variant="primary" disabled={!!job || minutes.text.trim().length < 10}>{job === "minutes" ? "Reading…" : "Add minutes"}</PillButton>
           </form>
           <div className="mt-3 space-y-2">
             {room.minutes.map((m) => {

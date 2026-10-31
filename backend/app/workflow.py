@@ -193,7 +193,7 @@ def get_spec(project_id: str) -> Dict:
     import json
     STORE.project(project_id)
     row = db.one("SELECT * FROM project_specs WHERE project_id = ?", (project_id,))
-    clar = db.rows("SELECT * FROM clarifications WHERE project_id = ? ORDER BY created_at", (project_id,))
+    clar = db.rows("SELECT * FROM clarifications WHERE project_id = ? ORDER BY created_at, id", (project_id,))
     for c in clar:
         c["options"] = json.loads(c.pop("options_json"))
     if not row:

@@ -2,6 +2,7 @@ import { ArrowLeft, BadgeCheck, ExternalLink, FileUp, Link2, RefreshCw, ShieldAl
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "../api";
 import { ScoreGrid } from "../components/Modals";
+import { AI_STEPS, AIProgress, useSingleRun } from "../components/AIProgress";
 import { Avatar, Bar, Card, Empty, Modal, PillButton, StatusPill } from "../components/ui";
 import type { Intelligence, Nav, SkillAssessment } from "../types";
 
@@ -18,6 +19,7 @@ export function EmployeeProfile({ employeeId, isAdmin, isSelf, onNav, toast, rel
   const [reason, setReason] = useState("");
   const [target, setTarget] = useState("");
   const [uploading, setUploading] = useState(false);
+  const { busy: evaluating, run: once } = useSingleRun();
   const [linkValues, setLinkValues] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ bio: "", education: "", certifications: "", previous_projects: "", portfolio_urls: "" });
   const file = useRef<HTMLInputElement>(null);
@@ -72,7 +74,8 @@ export function EmployeeProfile({ employeeId, isAdmin, isSelf, onNav, toast, rel
         )}
       </Card>
 
-      <Card title="Skill assessment (0 to 10)" action={isAdmin && <PillButton onClick={() => act(() => api(`/employees/${employeeId}/skills/evaluate`, { body: {} }), "Skills re-evaluated from current evidence.")}><RefreshCw size={13} />Re-evaluate</PillButton>}>
+      <Card title="Skill assessment (0 to 10)" action={isAdmin && <PillButton disabled={!!evaluating} onClick={() => once("skills", () => act(() => api(`/employees/${employeeId}/skills/evaluate`, { body: {} }), "Skills re-evaluated from current evidence."))}><RefreshCw size={13} />{evaluating ? "Evaluating…" : "Re-evaluate"}</PillButton>}>
+        {evaluating && <div className="mb-3"><AIProgress steps={AI_STEPS.skills} /></div>}
         <p className="mb-3 text-[12px] text-slate-500">Each score is separate from performance, availability and workload. Open a skill to see its evidence.</p>
         {!data.skills.length && <Empty>No skills on record yet. Upload a resume or ask a manager to add skills.</Empty>}
         <div className="grid gap-2 md:grid-cols-2">
@@ -109,6 +112,7 @@ export function EmployeeProfile({ employeeId, isAdmin, isSelf, onNav, toast, rel
             <label className="block text-[12px] font-medium text-slate-600">Job or role description to compare against (optional)<textarea rows={2} value={target} onChange={(x) => setTarget(x.target.value)} className="field" /></label>
             <input ref={file} type="file" hidden accept=".pdf,.docx,.txt" onChange={(x) => x.target.files?.[0] && uploadResume(x.target.files[0])} />
             <PillButton variant="primary" className="mt-2" disabled={uploading} onClick={() => file.current?.click()}><FileUp size={13} />{uploading ? "Processing…" : r ? "Upload a new resume" : "Upload resume"}</PillButton>
+            {uploading && <div className="mt-2"><AIProgress steps={AI_STEPS.resume} /></div>}
           </>}
           {!r && <p className="mt-3 text-[12px] text-slate-400">No resume uploaded yet.</p>}
           {r && (

@@ -1,6 +1,7 @@
 import { Copy, KeyRound, ShieldAlert, UserPlus } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { EmployeeImport } from "../components/EmployeeImport";
 import { Card, Empty, Modal, PillButton, StatusPill } from "../components/ui";
 import type { Invitation, Member, Nav, SessionUser, SkillRequest } from "../types";
 
@@ -80,6 +81,7 @@ export function TeamView({ user, toast, reload, onNav, refreshKey }: { user: Ses
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
       <div className="min-w-0 space-y-5">
+        <EmployeeImport toast={toast} reload={() => { load(); reload(); }} />
         <Card title={<span>Skill requests {pending.length > 0 && <span className="ml-1 rounded-full bg-rose-500 px-2 py-0.5 text-[11px] text-white">{pending.length}</span>}</span>}>
           {!requests.length && <Empty>No skill requests yet.</Empty>}
           <ul className="space-y-2">

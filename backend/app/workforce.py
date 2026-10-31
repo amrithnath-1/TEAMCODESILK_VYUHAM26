@@ -42,6 +42,7 @@ def get_profile(employee_id: str) -> Dict:
 
 def save_profile(employee_id: str, profile: Dict, actor: str) -> Dict:
     STORE.employee(employee_id)
+    profile = {**get_profile(employee_id), **profile}      # keeps fields this form doesn't edit, such as an imported phone number
     with db.tx() as c:
         c.execute("INSERT INTO profiles (employee_id, json, updated_at) VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
                   (employee_id, db.dumps(profile), utcnow()))

@@ -1,8 +1,9 @@
 import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Eye, FileUp, Lock, RefreshCw, RotateCcw, Sparkles, Trash2, Unlock, UserPlus, X } from "lucide-react";
-import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import { DragEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, apiDownload, apiUpload } from "../api";
 import { BANDS, Donut, HealthBadge } from "../components/ProgressDonut";
+import { AI_STEPS, AIProgress, useSingleRun } from "../components/AIProgress";
 import { CandidateModal } from "../components/Modals";
 import { ProjectBudget } from "../components/ProjectBudget";
 import { ProjectRoom } from "../components/ProjectRoom";
@@ -169,7 +170,7 @@ function Documents({ id, isAdmin, toast, onAnalyze }: { id: string; isAdmin: boo
   const upload = async (files: FileList | File[]) => {
     const form = new FormData();
     [...files].forEach((f) => form.append("files", f));
-    if (![...files].length) return;
+    if (![...files].length || pct !== null) return;
     setPct(0);
     try {
       const r = await apiUpload<{ results: typeof results }>(`/projects/${id}/documents`, form, setPct);
@@ -198,7 +199,7 @@ function Documents({ id, isAdmin, toast, onAnalyze }: { id: string; isAdmin: boo
           <p className="mt-2 text-[14px] font-medium text-slate-700">Drag project files here, or <button className="text-brand-600 underline" onClick={() => input.current?.click()}>browse</button></p>
           <p className="text-[12px] text-slate-400">PDF, DOCX, PPTX, TXT, CSV, XLSX · up to 20 MB each · several at once</p>
           <input ref={input} type="file" multiple hidden accept=".pdf,.docx,.pptx,.txt,.csv,.xlsx" onChange={(e) => e.target.files && upload(e.target.files)} />
-          {pct !== null && <div className="mx-auto mt-3 max-w-xs"><Bar value={pct} /><p className="mt-1 text-[11px] text-slate-500">Uploading {pct}%</p></div>}
+          {pct !== null && <div className="mx-auto mt-3 max-w-md text-left"><AIProgress steps={AI_STEPS.documents.slice(1)} pct={pct} /></div>}
           {results.length > 0 && <div className="mt-3 space-y-1 text-left text-[12px]">{results.map((r, i) => <p key={i} className={r.status === "uploaded" ? "text-emerald-600" : "text-rose-600"}>{r.filename}: {r.status === "uploaded" ? "uploaded" : r.error}</p>)}</div>}
         </div>
       )}
@@ -211,6 +212,7 @@ function Documents({ id, isAdmin, toast, onAnalyze }: { id: string; isAdmin: boo
                 <div className="truncate text-[13px] font-medium text-slate-800">{d.filename} <span className="text-slate-400">v{d.version}</span></div>
                 <div className="text-[11px] text-slate-400">{(d.size / 1024).toFixed(0)} KB · {d.chunk_count} passages · {d.uploaded_by}</div>
                 {d.error && <p className="text-[12px] text-rose-600">{d.error}</p>}
+                {["uploaded", "extracting"].includes(d.status) && <div className="mt-1.5"><AIProgress steps={AI_STEPS.documents.slice(1)} compact /></div>}
                 {d.suspicious_count > 0 && <p className="text-[12px] text-amber-700">⚠ {d.suspicious_count} passage(s) look like embedded instructions. They are treated as data and ignored as commands.</p>}
               </div>
               <StatusPill status={d.status} />
@@ -241,25 +243,50 @@ function Documents({ id, isAdmin, toast, onAnalyze }: { id: string; isAdmin: boo
 
 function Specification({ id, toast, onPlan, changed }: { id: string; toast: Toast; onPlan: () => void; changed: () => void }) {
   const [spec, setSpec] = useState<Spec | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy: job, run: once } = useSingleRun();
+  const busy = !!job;
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [failed, setFailed] = useState<Record<string, string>>({});
+  const keepScroll = useRef<number | null>(null);
   const [summary, setSummary] = useState("");
   const [notes, setNotes] = useState("");
 
   const apply = (s: Spec) => { setSpec(s); setSummary(s.analysis?.summary ?? ""); setNotes(s.analysis?.manager_notes ?? ""); };
   useEffect(() => { api<Spec>(`/projects/${id}/spec`).then(apply).catch((e) => toast(e.message, "err")); }, [id, toast]);
-  const run = async (fn: () => Promise<Spec>, done?: string) => {
-    setBusy(true);
-    try { apply(await fn()); if (done) toast(done); changed(); } catch (e: any) { toast(e.message, "err"); } finally { setBusy(false); }
-  };
+  const run = (name: string, fn: () => Promise<Spec>, done?: string) => once(name, async () => {
+    try { apply(await fn()); if (done) toast(done); changed(); } catch (e: any) { toast(e.message, "err"); }
+  });
+  // Saving an answer updates only that question, and leaves the page, other answers and unsaved summary edits where they are.
+  const saveAnswer = (questionId: string) => once(`answer:${questionId}`, async () => {
+    keepScroll.current = window.scrollY;
+    setFailed((f) => ({ ...f, [questionId]: "" }));
+    try {
+      const next = await api<Spec>(`/projects/${id}/clarifications/${questionId}`, { body: { answer: answers[questionId] } });
+      keepScroll.current = window.scrollY;
+      setSpec(next);
+      setSaved((v) => ({ ...v, [questionId]: true }));
+      setAnswers((v) => ({ ...v, [questionId]: "" }));
+      changed();
+    } catch (e: any) {
+      setFailed((f) => ({ ...f, [questionId]: e.message }));      // the typed answer stays in the box
+    }
+  });
+  useLayoutEffect(() => {
+    if (keepScroll.current !== null) {
+      window.scrollTo({ top: keepScroll.current });
+      keepScroll.current = null;
+    }
+  }, [spec]);
   if (!spec) return <div className="p-10 text-center text-sm text-slate-400">Loading…</div>;
   const open = spec.clarifications.filter((c) => c.status === "open");
   const a = spec.analysis;
   const dirty = a && (summary !== (a.summary ?? "") || notes !== (a.manager_notes ?? ""));
   return (
     <div className="space-y-5">
-      <Card title="Document analysis" action={<PillButton variant="primary" disabled={busy} onClick={() => run(() => api(`/projects/${id}/analyze`, { body: {} }))}><Sparkles size={13} />{busy ? "Analysing…" : a ? "Re-analyse" : "Analyse documents"}</PillButton>}>
-        {!a && <Empty>Upload documents, then analyse them. The result appears here for your review.</Empty>}
+      <Card title="Document analysis" action={<PillButton variant="primary" disabled={busy} onClick={() => run("analyze", () => api(`/projects/${id}/analyze`, { body: {} }), "Analysis complete. Review the results below.")}><Sparkles size={13} />{job === "analyze" ? "Analysing…" : a ? "Re-analyse" : "Analyse documents"}</PillButton>}>
+        {job === "analyze" && <div className="mb-3"><AIProgress steps={AI_STEPS.analysis} /></div>}
+        {!a && job !== "analyze" && <Empty>Upload documents, then analyse them. The result appears here for your review.</Empty>}
         {a && (
           <>
             <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
@@ -270,7 +297,7 @@ function Specification({ id, toast, onPlan, changed }: { id: string; toast: Toas
             </div>
             <label className="block text-[12px] font-medium text-slate-600">Summary<textarea rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} className="field" /></label>
             <label className="mt-2 block text-[12px] font-medium text-slate-600">Manager notes (added to the specification)<textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="field" /></label>
-            {dirty && <PillButton className="mt-2" disabled={busy} onClick={() => run(() => api(`/projects/${id}/spec`, { method: "PATCH", body: { summary, notes } }), "Specification updated.")}>Save changes</PillButton>}
+            {dirty && <PillButton className="mt-2" disabled={busy} onClick={() => run("patch", () => api(`/projects/${id}/spec`, { method: "PATCH", body: { summary, notes } }), "Specification updated.")}>Save changes</PillButton>}
           </>
         )}
       </Card>
@@ -283,11 +310,15 @@ function Specification({ id, toast, onPlan, changed }: { id: string; toast: Toas
                 {c.why && <p className="text-[11px] text-slate-500">{c.why}</p>}
                 {c.answer && <p className="mt-1 text-[12px] text-emerald-700">Answer: {c.answer}</p>}
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {c.options.map((o) => <button key={o} onClick={() => setAnswers({ ...answers, [c.id]: o })} className={`rounded-full border px-3 py-1 text-[11px] ${answers[c.id] === o ? "border-brand-500 text-brand-600" : "border-slate-200 text-slate-600"}`}>{o}</button>)}
+                  {c.options.map((o) => <button key={o} onClick={() => { setAnswers({ ...answers, [c.id]: o }); setSaved({ ...saved, [c.id]: false }); }} className={`rounded-full border px-3 py-1 text-[11px] ${answers[c.id] === o ? "border-brand-500 text-brand-600" : "border-slate-200 text-slate-600"}`}>{o}</button>)}
                 </div>
                 <div className="mt-2 flex gap-2">
-                  <input aria-label="Your answer" value={answers[c.id] ?? ""} onChange={(e) => setAnswers({ ...answers, [c.id]: e.target.value })} placeholder={c.answer ? "Change the answer" : "Type your answer"} className="field mt-0 flex-1" />
-                  <PillButton variant="primary" disabled={busy || !answers[c.id]?.trim()} onClick={() => run(() => api(`/projects/${id}/clarifications/${c.id}`, { body: { answer: answers[c.id] } }))}>Save</PillButton>
+                  <input aria-label="Your answer" value={answers[c.id] ?? ""} onChange={(e) => { setAnswers({ ...answers, [c.id]: e.target.value }); setSaved({ ...saved, [c.id]: false }); }} onKeyDown={(e) => { if (e.key === "Enter" && answers[c.id]?.trim()) { e.preventDefault(); saveAnswer(c.id); } }} placeholder={c.answer ? "Change the answer" : "Type your answer"} className="field mt-0 flex-1" />
+                  <PillButton variant="primary" disabled={busy || !answers[c.id]?.trim()} onClick={() => saveAnswer(c.id)}>{job === `answer:${c.id}` ? "Saving…" : "Save"}</PillButton>
+                </div>
+                <div aria-live="polite" className="min-h-[18px] pt-1 text-[11px]">
+                  {saved[c.id] && <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={12} />Answer saved</span>}
+                  {failed[c.id] && <span className="text-rose-600">{failed[c.id]} Your answer is still here, so you can try again.</span>}
                 </div>
               </div>
             ))}
@@ -317,7 +348,7 @@ function Specification({ id, toast, onPlan, changed }: { id: string; toast: Toas
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[13px] text-slate-600">{spec.status === "approved" ? `Approved by ${spec.approved_by}. You can generate the plan.` : open.length ? `Answer the ${open.length} open question(s) to approve.` : "Review the specification, then approve it."}</p>
             {spec.status === "approved" ? <PillButton variant="primary" onClick={onPlan}>Go to plan</PillButton>
-              : <PillButton variant="success" disabled={busy || open.length > 0} onClick={() => run(() => api(`/projects/${id}/spec/approve`, { body: {} }), "Specification approved.")}><CheckCircle2 size={13} />Approve specification</PillButton>}
+              : <PillButton variant="success" disabled={busy || open.length > 0} onClick={() => run("approve", () => api(`/projects/${id}/spec/approve`, { body: {} }), "Specification approved.")}><CheckCircle2 size={13} />Approve specification</PillButton>}
           </div>
         </Card>
       )}
@@ -328,14 +359,15 @@ function Specification({ id, toast, onPlan, changed }: { id: string; toast: Toas
 function PlanTab({ id, toast, changed, onTasks }: { id: string; toast: Toast; changed: () => void; onTasks: () => void }) {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy: job, run: once } = useSingleRun();
+  const busy = !!job;
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => { api<any>(`/projects/${id}/plan`).then((p) => { setPlan(p.id ? p : null); setLoaded(true); }).catch((e) => toast(e.message, "err")); }, [id, toast]);
-  const run = async (fn: () => Promise<void>) => { setBusy(true); try { await fn(); } catch (e: any) { toast(e.message, "err"); } finally { setBusy(false); } };
-  const generate = (force: boolean) => run(async () => { setPlan(await api(`/projects/${id}/plan/generate?force=${force}`, { body: {} })); setDirty(false); });
-  const save = () => run(async () => { setPlan(await api(`/projects/${id}/plan/${plan!.id}`, { method: "PUT", body: plan!.plan })); setDirty(false); toast("Plan saved and suggestions recalculated."); });
-  const approve = () => run(async () => {
+  const run = (name: string, fn: () => Promise<void>) => once(name, async () => { try { await fn(); } catch (e: any) { toast(e.message, "err"); } });
+  const generate = (force: boolean) => run("generate", async () => { setPlan(await api(`/projects/${id}/plan/generate?force=${force}`, { body: {} })); setDirty(false); toast("Plan ready. Review it, then approve it to create the tasks."); });
+  const save = () => run("save", async () => { setPlan(await api(`/projects/${id}/plan/${plan!.id}`, { method: "PUT", body: plan!.plan })); setDirty(false); toast("Plan saved and suggestions recalculated."); });
+  const approve = () => run("approve", async () => {
     const r = await api<{ tasks: Task[] }>(`/projects/${id}/plan/${plan!.id}/approve`, { body: {} });
     toast(`${r.tasks.length} tasks are saved.`);
     setPlan(await api(`/projects/${id}/plan`));
@@ -351,7 +383,7 @@ function PlanTab({ id, toast, changed, onTasks }: { id: string; toast: Toast; ch
     setDirty(true);
   };
   if (!loaded) return <div className="p-10 text-center text-sm text-slate-400">Loading…</div>;
-  if (!plan) return <Card title="Project plan" action={<PillButton variant="primary" disabled={busy} onClick={() => generate(false)}><Sparkles size={13} />{busy ? "Generating…" : "Generate plan"}</PillButton>}><Empty>Approve the specification, then generate a plan. No tasks are created until you approve the plan.</Empty></Card>;
+  if (!plan) return <Card title="Project plan" action={<PillButton variant="primary" disabled={busy} onClick={() => generate(false)}><Sparkles size={13} />{job === "generate" ? "Generating…" : "Generate plan"}</PillButton>}>{job === "generate" ? <AIProgress steps={AI_STEPS.plan} /> : <Empty>Approve the specification, then generate a plan. No tasks are created until you approve the plan.</Empty>}</Card>;
   const editable = plan.status === "draft";
   const p = plan.plan;
   return (
@@ -361,6 +393,8 @@ function PlanTab({ id, toast, changed, onTasks }: { id: string; toast: Toast; ch
         {editable && dirty && <PillButton disabled={busy} onClick={save}>Save edits</PillButton>}
         {editable && <PillButton variant="success" disabled={busy || dirty} onClick={approve}><CheckCircle2 size={13} />Approve and create tasks</PillButton>}
       </div>}>
+        {job === "generate" && <div className="mb-3"><AIProgress steps={AI_STEPS.plan} /></div>}
+        {job === "approve" && <div className="mb-3"><AIProgress steps={AI_STEPS.tasks} /></div>}
         <div className="flex flex-wrap items-center gap-2 text-[11px]"><StatusPill status={plan.status} /><span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Source: {plan.source}</span><span className="text-slate-400">Suggested people come from the allocation engine, not the AI.</span></div>
         <p className="mt-2 text-[13px] text-slate-600">{p.summary}</p>
         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">{p.milestones.map((m) => <span key={m.name} className="rounded-full bg-brand-50 px-2.5 py-1 text-brand-700">{m.name} · day {m.due_day}</span>)}</div>
@@ -472,7 +506,7 @@ function Evaluation({ id, tasks }: { id: string; tasks: Task[] }) {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { api(`/projects/${id}/evaluation`).then(setEv).catch((e) => setErr(e.message)); }, [id, tasks]);
   if (err) return <Empty>{err}</Empty>;
-  if (!ev) return <div className="p-10 text-center text-sm text-slate-400">Evaluating…</div>;
+  if (!ev) return <AIProgress steps={AI_STEPS.evaluation} />;
   const color: Record<string, string> = { Critical: "bg-rose-500 text-white", High: "bg-orange-400 text-white", Medium: "bg-amber-100 text-amber-800" };
   return (
     <div className="grid gap-5 lg:grid-cols-2">
