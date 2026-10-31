@@ -1,0 +1,5 @@
+group,label,n,correct,accuracy_pct,low,high,median_seconds
+document_direct,"Documents, direct wording",24,24,100.0,86.20194241710247,100.00000000000003,11.355644850002136
+document_paraphrase,"Documents, paraphrased",12,12,100.0,75.74992425007574,99.99999999999997,13.028023700004269
+meeting_minutes,Meeting minutes,6,6,100.0,60.96569663469354,100.0,12.146807549994264
+unanswerable,Unanswerable (must decline),6,6,100.0,60.96569663469354,100.0,12.481892049996532

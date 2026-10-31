@@ -1,0 +1,670 @@
+{
+ "engine": "sqlite",
+ "data": "SIMULATED documents and questions, real application code",
+ "reference": {
+  "gini_before": 0.1584,
+  "gini_after": 0.1369,
+  "allocated": 8,
+  "tasks": 8,
+  "api_seconds": 0.03489949999493547,
+  "assignments": {
+   "TSK-101": "EMP-06",
+   "TSK-102": "EMP-01",
+   "TSK-103": "EMP-05",
+   "TSK-104": "EMP-02",
+   "TSK-105": "EMP-04",
+   "TSK-106": "EMP-07",
+   "TSK-107": "EMP-09",
+   "TSK-108": "EMP-10"
+  },
+  "note": "Seeded demo scenario through POST /tasks/allocate-all, on a fresh copy."
+ },
+ "planning_rule_based": [
+  {
+   "run": 0,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.5992606000072556,
+   "analysis_seconds": 0.03155240000342019,
+   "plan_generation_seconds": 0.03580800000054296,
+   "plan_approval_seconds": 0.030058200005441904,
+   "allocation_seconds": 0.02786000000196509,
+   "total_seconds": 0.7245392000186257
+  },
+  {
+   "run": 1,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07641019999573473,
+   "analysis_seconds": 0.024281700010760687,
+   "plan_generation_seconds": 0.026602600002661347,
+   "plan_approval_seconds": 0.03329989999474492,
+   "allocation_seconds": 0.019942099999752827,
+   "total_seconds": 0.1805365000036545
+  },
+  {
+   "run": 2,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.0837593000032939,
+   "analysis_seconds": 0.025113899988355115,
+   "plan_generation_seconds": 0.027181800003745593,
+   "plan_approval_seconds": 0.03137559999595396,
+   "allocation_seconds": 0.01965360000031069,
+   "total_seconds": 0.18708419999165926
+  },
+  {
+   "run": 3,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07556840000324883,
+   "analysis_seconds": 0.026095599998370744,
+   "plan_generation_seconds": 0.027114299999084324,
+   "plan_approval_seconds": 0.03361199999926612,
+   "allocation_seconds": 0.023253399995155632,
+   "total_seconds": 0.18564369999512564
+  },
+  {
+   "run": 4,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07740770000964403,
+   "analysis_seconds": 0.027652300006593578,
+   "plan_generation_seconds": 0.02590809999674093,
+   "plan_approval_seconds": 0.035702200009836815,
+   "allocation_seconds": 0.02017889999842737,
+   "total_seconds": 0.18684920002124272
+  },
+  {
+   "run": 5,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.08162389999779407,
+   "analysis_seconds": 0.02411099999153521,
+   "plan_generation_seconds": 0.0267327000037767,
+   "plan_approval_seconds": 0.033021800001733936,
+   "allocation_seconds": 0.021524600000702776,
+   "total_seconds": 0.1870139999955427
+  },
+  {
+   "run": 6,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07633579999674112,
+   "analysis_seconds": 0.026104300006409176,
+   "plan_generation_seconds": 0.029105899986461736,
+   "plan_approval_seconds": 0.043046699996921234,
+   "allocation_seconds": 0.02451160000055097,
+   "total_seconds": 0.19910429998708423
+  },
+  {
+   "run": 7,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.08028429999831133,
+   "analysis_seconds": 0.027615599989076145,
+   "plan_generation_seconds": 0.028706500001135282,
+   "plan_approval_seconds": 0.03414560000237543,
+   "allocation_seconds": 0.02201000000059139,
+   "total_seconds": 0.19276199999148957
+  },
+  {
+   "run": 8,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07493319999775849,
+   "analysis_seconds": 0.026684800002840348,
+   "plan_generation_seconds": 0.027778199990279973,
+   "plan_approval_seconds": 0.030706999998074025,
+   "allocation_seconds": 0.02372109999123495,
+   "total_seconds": 0.1838242999801878
+  },
+  {
+   "run": 9,
+   "source": "rule-based",
+   "tasks": 7,
+   "clarifications": 2,
+   "upload_and_index_seconds": 0.07696170000417624,
+   "analysis_seconds": 0.027396000004955567,
+   "plan_generation_seconds": 0.029506899998523295,
+   "plan_approval_seconds": 0.033573699998669326,
+   "allocation_seconds": 0.023815799999283627,
+   "total_seconds": 0.19125410000560805
+  }
+ ],
+ "retrieval": {
+  "chunks": 14,
+  "facts": 24,
+  "runs": [
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "How many concurrent shoppers must the Meridian portal support?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 5,
+    "latency_ms": 12.946599992574193
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What peak traffic load has to be handled at the same time?",
+    "rank": null,
+    "baseline_rank": 7,
+    "returned": 2,
+    "latency_ms": 11.998999994830228
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "How quickly must checkout complete?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 10.306199998012744
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What is the speed target for finishing a purchase?",
+    "rank": null,
+    "baseline_rank": 8,
+    "returned": 0,
+    "latency_ms": 11.370000007445924
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "In which region is customer data stored?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 3,
+    "latency_ms": 10.14230000146199
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Where does personal information have to live geographically?",
+    "rank": null,
+    "baseline_rank": 12,
+    "returned": 0,
+    "latency_ms": 10.282799994456582
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Is the loyalty module in scope for the first release?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 11.51209999807179
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Will rewards points ship in version one?",
+    "rank": null,
+    "baseline_rank": 12,
+    "returned": 0,
+    "latency_ms": 10.686399997211993
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Which gateway handles payments?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 10.968000002321787
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Who processes the card transactions?",
+    "rank": null,
+    "baseline_rank": 9,
+    "returned": 0,
+    "latency_ms": 9.819499988225289
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What is the mobile application delivered as?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 12.494100010371767
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Which framework is used for the phone app?",
+    "rank": null,
+    "baseline_rank": 11,
+    "returned": 0,
+    "latency_ms": 10.480799988727085
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What is the approved budget for Meridian?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 5,
+    "latency_ms": 11.00100000621751
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How much money has been authorised overall?",
+    "rank": null,
+    "baseline_rank": 2,
+    "returned": 0,
+    "latency_ms": 10.011299993493594
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What contingency reserve is held?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.97260000440292
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How large is the safety margin on spending?",
+    "rank": null,
+    "baseline_rank": 2,
+    "returned": 0,
+    "latency_ms": 9.496399987256154
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What is the monthly cap on cloud hosting?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 10.93429999309592
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What is the most we can spend on servers each month?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 6,
+    "latency_ms": 12.73959998798091
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Who approves contractor spend?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.913900008541532
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Whose sign-off do we need before hiring outside help?",
+    "rank": null,
+    "baseline_rank": 12,
+    "returned": 1,
+    "latency_ms": 9.694299995317124
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "When do licences renew?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 9.427500001038425
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "In which month do subscriptions come up again?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.371599997393787
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "When does user acceptance testing start?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 10.070800009998493
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What date do business users begin trying the system?",
+    "rank": null,
+    "baseline_rank": 4,
+    "returned": 0,
+    "latency_ms": 8.70730000315234
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "When is the public launch?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 9.60309999936726
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What is the go-live date for customers?",
+    "rank": null,
+    "baseline_rank": 2,
+    "returned": 0,
+    "latency_ms": 9.713899999042042
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "When does the code freeze apply?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 10.166199994273484
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "From what date can developers no longer change the code?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 6,
+    "latency_ms": 11.192199992365204
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Who is the penetration test booked with?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 11.494799997308291
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Which outside firm is checking our defences?",
+    "rank": null,
+    "baseline_rank": 7,
+    "returned": 0,
+    "latency_ms": 11.166800002683885
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "How many weekends do data migration rehearsals run?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 3,
+    "latency_ms": 11.19430000835564
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How often do we practise moving the old records?",
+    "rank": null,
+    "baseline_rank": 6,
+    "returned": 6,
+    "latency_ms": 9.872599999653175
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What is the primary database?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.882900005322881
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Which storage engine sits at the centre of the system?",
+    "rank": null,
+    "baseline_rank": 1,
+    "returned": 0,
+    "latency_ms": 10.533200009376742
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "When do session tokens expire?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 11.170800004038028
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How long can someone stay idle before being logged out?",
+    "rank": null,
+    "baseline_rank": 3,
+    "returned": 2,
+    "latency_ms": 10.31479999073781
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What does product search run on?",
+    "rank": 3,
+    "baseline_rank": 1,
+    "returned": 3,
+    "latency_ms": 10.131899995030835
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Which technology powers looking up items in the catalogue?",
+    "rank": null,
+    "baseline_rank": 13,
+    "returned": 0,
+    "latency_ms": 10.603700007777661
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "How long are backups retained?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 10.50750000285916
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How far back can we restore from?",
+    "rank": null,
+    "baseline_rank": 13,
+    "returned": 0,
+    "latency_ms": 10.489499996765517
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "How is internal traffic encrypted?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.532399999443442
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "How do the services protect what they send to one another?",
+    "rank": null,
+    "baseline_rank": 8,
+    "returned": 0,
+    "latency_ms": 10.962899992591701
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Who owns the warehouse API?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 1,
+    "latency_ms": 9.804100001929328
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Who is responsible for the riskiest outside dependency?",
+    "rank": null,
+    "baseline_rank": 7,
+    "returned": 0,
+    "latency_ms": 10.428699999465607
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "What accessibility level must be met?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 9.124899996095337
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "What standard applies for users with disabilities?",
+    "rank": null,
+    "baseline_rank": 8,
+    "returned": 1,
+    "latency_ms": 8.938400002080016
+   },
+   {
+    "engine": "sqlite",
+    "kind": "direct",
+    "question": "Which translations are required before launch?",
+    "rank": 1,
+    "baseline_rank": 1,
+    "returned": 2,
+    "latency_ms": 11.416800000006333
+   },
+   {
+    "engine": "sqlite",
+    "kind": "paraphrase",
+    "question": "Which extra languages must be ready for go-live?",
+    "rank": null,
+    "baseline_rank": 14,
+    "returned": 2,
+    "latency_ms": 9.51189998886548
+   }
+  ]
+ },
+ "minutes_search": [
+  {
+   "question": "What did we decide about the order service?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "approved_decision",
+   "got_types": [
+    "approved_decision",
+    "meeting_minutes"
+   ],
+   "sources": 4
+  },
+  {
+   "question": "Who owns the order event schema action?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "action_item",
+   "got_types": [
+    "action_item",
+    "meeting_minutes"
+   ],
+   "sources": 4
+  },
+  {
+   "question": "What was decided about hosting money?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "approved_decision",
+   "got_types": [
+    "approved_decision",
+    "meeting_minutes"
+   ],
+   "sources": 3
+  },
+  {
+   "question": "Who updates the forecast sheet?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "action_item",
+   "got_types": [
+    "action_item",
+    "meeting_minutes"
+   ],
+   "sources": 2
+  },
+  {
+   "question": "Where do we run the soft launch?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "approved_decision",
+   "got_types": [
+    "approved_decision",
+    "meeting_minutes"
+   ],
+   "sources": 4
+  },
+  {
+   "question": "Who prepares the rollback runbook?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "action_item",
+   "got_types": [
+    "action_item",
+    "meeting_minutes"
+   ],
+   "sources": 2
+  },
+  {
+   "question": "Was the penetration test extended?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "unapproved_minutes",
+   "got_types": [
+    "unapproved_minutes"
+   ],
+   "sources": 3
+  },
+  {
+   "question": "What is the risk with support staffing?",
+   "found": true,
+   "right_source_type": true,
+   "expected_type": "meeting_minutes",
+   "got_types": [
+    "meeting_minutes"
+   ],
+   "sources": 1
+  }
+ ]
+}
